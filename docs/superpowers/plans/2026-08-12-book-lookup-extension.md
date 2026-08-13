@@ -1699,6 +1699,21 @@ function source(relativePath) {
 }
 
 /**
+ * Executable code with comments removed.
+ *
+ * These files document their own invariants, and that documentation naturally
+ * quotes the very patterns being banned — `detect-helpers.js` says outright
+ * that it may never read `.value`. Grepping raw source would fail on the
+ * comment explaining the rule. Strip comments and the invariant tests what
+ * actually runs.
+ */
+function code(relativePath) {
+  return source(relativePath)
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+/**
  * The files that execute inside a page's context. Everything here runs where a
  * password field lives, so these are the files the invariants must hold for.
  */
@@ -1713,20 +1728,41 @@ const IN_PAGE_FILES = [
   'src/lib/query.js',
 ];
 
+describe('the comment stripper does not make these invariants vacuous', () => {
+  it.each(IN_PAGE_FILES)('%s still has substantial code after stripping', (file) => {
+    expect(code(file).trim().length).toBeGreaterThan(50);
+  });
+
+  it('leaves real code untouched while removing prose', () => {
+    const stripped = code('src/lib/detect-helpers.js');
+    expect(stripped).toContain('querySelector');
+    expect(stripped).toContain('export function findUsernameField');
+    expect(stripped).not.toContain('SECURITY INVARIANT');
+  });
+
+  it('would catch a genuine violation', () => {
+    // Positive control: the banned patterns must actually be detectable in code.
+    const sample = 'const v = input.value;\nfetch("/x");\nlocation.assign("/y");';
+    expect(sample).toMatch(/\.value\b/);
+    expect(sample).toMatch(/\bfetch\(/);
+    expect(sample).toMatch(/location\.assign/);
+  });
+});
+
 describe('the content script never reads a field value', () => {
   it.each(IN_PAGE_FILES)('%s contains no .value access', (file) => {
-    expect(source(file)).not.toMatch(/\.value\b/);
+    expect(code(file)).not.toMatch(/\.value\b/);
   });
 
   it.each(IN_PAGE_FILES)('%s reads no form data in bulk', (file) => {
-    expect(source(file)).not.toMatch(/\bFormData\b/);
-    expect(source(file)).not.toMatch(/\.elements\b/);
+    expect(code(file)).not.toMatch(/\bFormData\b/);
+    expect(code(file)).not.toMatch(/\.elements\b/);
   });
 });
 
 describe('the content script never navigates', () => {
   it.each(IN_PAGE_FILES)('%s performs no navigation', (file) => {
-    const text = source(file);
+    const text = code(file);
     expect(text).not.toMatch(/location\.assign/);
     expect(text).not.toMatch(/location\.replace/);
     expect(text).not.toMatch(/location\.href\s*=/);
@@ -1737,7 +1773,7 @@ describe('the content script never navigates', () => {
 
 describe('the content script never exfiltrates', () => {
   it.each(IN_PAGE_FILES)('%s makes no network calls and logs nothing', (file) => {
-    const text = source(file);
+    const text = code(file);
     expect(text).not.toMatch(/\bfetch\(/);
     expect(text).not.toMatch(/XMLHttpRequest/);
     expect(text).not.toMatch(/\bconsole\.(log|info|warn|debug)\(/);
@@ -1839,14 +1875,14 @@ export async function run() {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- test/security-invariants.test.js`
-Expected: PASS, 35 tests.
+Expected: PASS, 45 tests.
 
 If the `.value` assertion fails on a file you did not expect, do not weaken the test — find the read and remove it. That test is the security boundary this whole design rests on.
 
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 112 tests.
+Expected: PASS, 122 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2142,7 +2178,7 @@ Expected: three tabs open. SFPL is focused and shows results for that title. Goo
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 112 tests.
+Expected: PASS, 122 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2373,7 +2409,7 @@ init();
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 112 tests.
+Expected: PASS, 122 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2570,4 +2606,4 @@ git commit -m "test: verify page classification against real captures, add READM
 
 **Two deliberate departures from the spec**, both documented above with reasoning: `detect` returns five states rather than four, and `usernameSelector` is replaced by a generic resolver.
 
-**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 41, T4 → 61, T5 → 77, T8 → 112. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
+**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 41, T4 → 61, T5 → 77, T8 → 122. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
