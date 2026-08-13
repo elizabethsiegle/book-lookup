@@ -202,7 +202,7 @@ export function normalizeMode(input) {
 - [ ] **Step 8: Run the test to verify it passes**
 
 Run: `npm test -- test/query.test.js`
-Expected: PASS, 9 tests.
+Expected: PASS, 7 tests.
 
 - [ ] **Step 9: Write the failing test for the SFPL URL builder**
 
@@ -286,7 +286,7 @@ export const sfpl = {
 - [ ] **Step 12: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 15 tests across 2 files.
+Expected: PASS, 13 tests across 2 files.
 
 If any expected URL string in Step 9 disagrees with what `URLSearchParams` actually produces, **the test is wrong, not the implementation** — these are mechanical encoding facts. Correct the expected string to the observed output and note it in the commit message.
 
@@ -431,7 +431,7 @@ export const storygraph = {
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 24 tests.
+Expected: PASS, 21 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -705,14 +705,14 @@ export function hasChallenge(doc) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npm test -- test/detect-helpers.test.js`
-Expected: PASS, 21 tests.
+Expected: PASS, 20 tests.
 
 If `DOMParser` is undefined, confirm `vitest.config.js` sets `environment: 'jsdom'` — that is the cause.
 
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 45 tests.
+Expected: PASS, 41 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1131,7 +1131,7 @@ Expected: PASS, 20 tests.
 - [ ] **Step 10: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 65 tests.
+Expected: PASS, 61 tests.
 
 - [ ] **Step 11: Commit**
 
@@ -1395,7 +1395,7 @@ Expected: PASS, 16 tests.
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 81 tests.
+Expected: PASS, 77 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -1503,7 +1503,7 @@ export async function savePrefs(partial) {
 - [ ] **Step 3: Run the full suite to confirm nothing regressed**
 
 Run: `npm test`
-Expected: PASS, 81 tests.
+Expected: PASS, 77 tests.
 
 - [ ] **Step 4: Commit**
 
@@ -1662,7 +1662,7 @@ Expected: a `ReferenceError` mentioning `chrome`. That proves the file parses an
 - [ ] **Step 3: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 81 tests.
+Expected: PASS, 77 tests.
 
 - [ ] **Step 4: Commit**
 
@@ -1839,14 +1839,14 @@ export async function run() {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- test/security-invariants.test.js`
-Expected: PASS, 27 tests.
+Expected: PASS, 35 tests.
 
 If the `.value` assertion fails on a file you did not expect, do not weaken the test — find the read and remove it. That test is the security boundary this whole design rests on.
 
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 108 tests.
+Expected: PASS, 112 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2142,7 +2142,7 @@ Expected: three tabs open. SFPL is focused and shows results for that title. Goo
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 108 tests.
+Expected: PASS, 112 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2373,7 +2373,7 @@ init();
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 108 tests.
+Expected: PASS, 112 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2570,4 +2570,4 @@ git commit -m "test: verify page classification against real captures, add READM
 
 **Two deliberate departures from the spec**, both documented above with reasoning: `detect` returns five states rather than four, and `usernameSelector` is replaced by a generic resolver.
 
-**Running test counts** (cumulative, to catch a silently skipped file): T1 → 15, T2 → 24, T3 → 45, T4 → 65, T5 → 81, T8 → 108. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value.
+**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 41, T4 → 61, T5 → 77, T8 → 112. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
