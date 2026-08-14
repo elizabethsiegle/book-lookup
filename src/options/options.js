@@ -7,6 +7,24 @@ const modeRadios = document.querySelectorAll('input[name="mode"]');
 
 let statusTimer = null;
 
+/**
+ * Every write that reports a result takes a ticket. Storage calls are async,
+ * so without this an earlier click's "Saved." can resolve after a later
+ * click's refusal and overwrite it — telling the user the opposite of what
+ * happened. A stale ticket means a newer click has superseded this one, so
+ * it reports nothing and re-renders nothing.
+ */
+let statusSeq = 0;
+
+function takeTicket() {
+  statusSeq += 1;
+  return statusSeq;
+}
+
+function isCurrent(ticket) {
+  return ticket === statusSeq;
+}
+
 function flash(message) {
   status.textContent = message;
   clearTimeout(statusTimer);
@@ -20,15 +38,20 @@ function selectedSites() {
 }
 
 async function persistSites() {
+  const ticket = takeTicket();
   const sites = selectedSites();
+
   if (!sites.length) {
-    flash('Search all needs at least one site.');
     // Re-check the box the user just cleared rather than storing an empty list.
     const prefs = await loadPrefs();
+    if (!isCurrent(ticket)) return;
     renderSites(prefs.sites);
+    flash('Search all needs at least one site.');
     return;
   }
+
   await savePrefs({ sites });
+  if (!isCurrent(ticket)) return;
   flash('Saved.');
 }
 
@@ -59,7 +82,11 @@ document.getElementById('open-passwords').addEventListener('click', () => {
 
 for (const radio of modeRadios) {
   radio.addEventListener('change', async (event) => {
+    // Shares the ticket counter with persistSites: a mode save resolving late
+    // must not overwrite a site refusal message either.
+    const ticket = takeTicket();
     await savePrefs({ mode: event.target.value === 'author' ? 'author' : 'title' });
+    if (!isCurrent(ticket)) return;
     flash('Saved.');
   });
 }
