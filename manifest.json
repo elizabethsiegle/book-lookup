@@ -1,0 +1,42 @@
+{
+  "manifest_version": 3,
+  "name": "Book Lookup",
+  "version": "1.0.0",
+  "description": "One textbox: search a book title or author across SFPL, Goodreads and The StoryGraph.",
+  "permissions": ["storage"],
+  "host_permissions": [
+    "https://sfpl.bibliocommons.com/*",
+    "https://www.goodreads.com/*",
+    "https://app.thestorygraph.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "src/popup/popup.html",
+    "default_title": "Book Lookup"
+  },
+  "options_page": "src/options/options.html",
+  "content_scripts": [
+    {
+      "matches": [
+        "https://sfpl.bibliocommons.com/*",
+        "https://www.goodreads.com/*",
+        "https://app.thestorygraph.com/*"
+      ],
+      "js": ["src/content/loader.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["src/content/runner.js", "src/sites/*.js", "src/lib/*.js"],
+      "matches": [
+        "https://sfpl.bibliocommons.com/*",
+        "https://www.goodreads.com/*",
+        "https://app.thestorygraph.com/*"
+      ]
+    }
+  ]
+}
