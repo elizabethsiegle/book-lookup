@@ -1574,7 +1574,15 @@ This task has no automated test — it is Chrome API surface and JSON config. It
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/content/runner.js", "src/sites/*.js", "src/lib/*.js"],
+      "resources": [
+        "src/content/runner.js",
+        "src/sites/index.js",
+        "src/sites/sfpl.js",
+        "src/sites/goodreads.js",
+        "src/sites/storygraph.js",
+        "src/lib/query.js",
+        "src/lib/detect-helpers.js"
+      ],
       "matches": [
         "https://sfpl.bibliocommons.com/*",
         "https://www.goodreads.com/*",
@@ -1824,7 +1832,7 @@ function source(relativePath) {
 }
 
 /**
- * Executable code with comments removed.
+ * Comments removed.
  *
  * These files document their own invariants, and that documentation naturally
  * quotes the very patterns being banned — `detect-helpers.js` says outright
@@ -1832,10 +1840,24 @@ function source(relativePath) {
  * comment explaining the rule. Strip comments and the invariant tests what
  * actually runs.
  */
+export function stripComments(text) {
+  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
+}
+
+/**
+ * Spacing normalized around member access and calls.
+ *
+ * Without this, every pattern below is defeated by reformatting alone:
+ * `/\.value\b/` does not match `el . value`, and `/\bfetch\(/` does not match
+ * `fetch (url)`. A guard that a stray space disarms is not a guard. Doing it
+ * once here covers every pattern uniformly, including ones added later.
+ */
+export function normalizeSpacing(text) {
+  return text.replace(/\s*\.\s*/g, '.').replace(/\s*\(/g, '(');
+}
+
 function code(relativePath) {
-  return source(relativePath)
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1');
+  return normalizeSpacing(stripComments(source(relativePath)));
 }
 
 /**
@@ -1867,10 +1889,28 @@ describe('the comment stripper does not make these invariants vacuous', () => {
 
   it('would catch a genuine violation', () => {
     // Positive control: the banned patterns must actually be detectable in code.
-    const sample = 'const v = input.value;\nfetch("/x");\nlocation.assign("/y");';
+    const sample = normalizeSpacing('const v = input.value;\nfetch("/x");\nlocation.assign("/y");');
     expect(sample).toMatch(/\.value\b/);
     expect(sample).toMatch(/\bfetch\(/);
     expect(sample).toMatch(/location\.assign/);
+  });
+
+  it('cannot be defeated by whitespace around a dot or a paren', () => {
+    // `el . value` and `fetch (x)` are valid JS and must not slip past.
+    const sample = normalizeSpacing(
+      'const v = el . value;\nfetch (url);\nlocation . href = "/y";\nwindow . open("/z");\nconsole . log(v);'
+    );
+    expect(sample).toMatch(/\.value\b/);
+    expect(sample).toMatch(/\bfetch\(/);
+    expect(sample).toMatch(/location\.href\s*=/);
+    expect(sample).toMatch(/window\.open/);
+    expect(sample).toMatch(/\bconsole\.(log|info|warn|debug)\(/);
+  });
+
+  it('normalizes spacing without destroying ordinary code', () => {
+    expect(normalizeSpacing('foo(a, b)')).toBe('foo(a, b)');
+    expect(normalizeSpacing('a.b.c')).toBe('a.b.c');
+    expect(normalizeSpacing('doc\n  .querySelectorAll(sel)')).toBe('doc.querySelectorAll(sel)');
   });
 });
 
@@ -1923,6 +1963,24 @@ describe('the manifest requests no more than it needs', () => {
   it('never requests all-urls access', () => {
     expect(JSON.stringify(manifest)).not.toContain('<all_urls>');
     expect(JSON.stringify(manifest)).not.toContain('*://*/*');
+  });
+
+  it('exposes to the page exactly the modules the content script imports, and no more', () => {
+    // A wildcard here would also hand these sites prefs.js, intents.js and
+    // badges.js, which nothing in the page-context import graph ever loads.
+    expect(manifest.web_accessible_resources[0].resources).toEqual([
+      'src/content/runner.js',
+      'src/sites/index.js',
+      'src/sites/sfpl.js',
+      'src/sites/goodreads.js',
+      'src/sites/storygraph.js',
+      'src/lib/query.js',
+      'src/lib/detect-helpers.js',
+    ]);
+  });
+
+  it('scopes web-accessible resources to the same three origins', () => {
+    expect(manifest.web_accessible_resources[0].matches).toEqual(manifest.host_permissions);
   });
 });
 ```
