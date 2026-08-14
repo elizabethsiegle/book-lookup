@@ -7,6 +7,7 @@ const queryInput = document.getElementById('query');
 const searchAll = document.getElementById('search-all');
 const sitesRow = document.getElementById('sites');
 const modeNote = document.getElementById('mode-note');
+const dispatchError = document.getElementById('dispatch-error');
 
 let enabledSites = ADAPTERS.map((adapter) => adapter.id);
 
@@ -34,8 +35,21 @@ async function dispatch(sites) {
   if (!query) return;
 
   const mode = currentMode();
+  // Saved before the send, deliberately: if the dispatch fails, the query the
+  // user typed is still worth remembering for the retry.
   await savePrefs({ mode, lastQuery: query });
-  await chrome.runtime.sendMessage({ type: 'search', query, mode, sites });
+
+  try {
+    await chrome.runtime.sendMessage({ type: 'search', query, mode, sites });
+  } catch {
+    // The service worker can be asleep, or the extension freshly reloaded
+    // during development. Say so and leave the popup open — closing on a
+    // silent failure looks identical to success and loses the query.
+    dispatchError.textContent = "Couldn't reach the extension. Try again.";
+    dispatchError.hidden = false;
+    return;
+  }
+
   window.close();
 }
 
@@ -55,7 +69,10 @@ form.addEventListener('submit', (event) => {
   dispatch(enabledSites);
 });
 
-queryInput.addEventListener('input', refreshEnabledState);
+queryInput.addEventListener('input', () => {
+  dispatchError.hidden = true;
+  refreshEnabledState();
+});
 
 async function init() {
   buildSiteButtons();

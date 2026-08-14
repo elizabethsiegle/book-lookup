@@ -125,3 +125,14 @@ button {
   line-height: 1.4;
   color: var(--muted);
 }
+
+.error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #7f1d1d;
+  background: #fdecec;
+  border: 1px solid #f0c4c4;
+  border-radius: 7px;
+}
