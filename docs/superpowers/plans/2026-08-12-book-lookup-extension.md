@@ -2058,14 +2058,14 @@ export async function run() {
 - [ ] **Step 5: Run the test to verify it passes**
 
 Run: `npm test -- test/security-invariants.test.js`
-Expected: PASS, 45 tests.
+Expected: PASS, 49 tests.
 
 If the `.value` assertion fails on a file you did not expect, do not weaken the test — find the read and remove it. That test is the security boundary this whole design rests on.
 
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 133 tests.
+Expected: PASS, 137 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2361,7 +2361,7 @@ Expected: three tabs open. SFPL is focused and shows results for that title. Goo
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 133 tests.
+Expected: PASS, 137 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2592,7 +2592,7 @@ init();
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 133 tests.
+Expected: PASS, 137 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2791,4 +2791,4 @@ git commit -m "test: verify page classification against real captures, add READM
 
 **Two deliberate departures from the spec**, both documented above with reasoning: `detect` returns five states rather than four, and `usernameSelector` is replaced by a generic resolver.
 
-**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 46, T4 → 72, T5 → 88, T8 → 133. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
+**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 46, T4 → 72, T5 → 88, T8 → 137. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
