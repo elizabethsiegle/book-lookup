@@ -1244,12 +1244,12 @@ export function adapterForUrl(url) {
 - [ ] **Step 9: Run the test to verify it passes**
 
 Run: `npm test -- test/sites-detect.test.js`
-Expected: PASS, 20 tests.
+Expected: PASS, 26 tests.
 
 - [ ] **Step 10: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 66 tests.
+Expected: PASS, 72 tests.
 
 - [ ] **Step 11: Commit**
 
@@ -1513,7 +1513,7 @@ Expected: PASS, 16 tests.
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 82 tests.
+Expected: PASS, 88 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -1621,7 +1621,7 @@ export async function savePrefs(partial) {
 - [ ] **Step 3: Run the full suite to confirm nothing regressed**
 
 Run: `npm test`
-Expected: PASS, 82 tests.
+Expected: PASS, 88 tests.
 
 - [ ] **Step 4: Commit**
 
@@ -1780,7 +1780,7 @@ Expected: a `ReferenceError` mentioning `chrome`. That proves the file parses an
 - [ ] **Step 3: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 82 tests.
+Expected: PASS, 88 tests.
 
 - [ ] **Step 4: Commit**
 
@@ -2007,7 +2007,7 @@ If the `.value` assertion fails on a file you did not expect, do not weaken the 
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 127 tests.
+Expected: PASS, 133 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2303,7 +2303,7 @@ Expected: three tabs open. SFPL is focused and shows results for that title. Goo
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 127 tests.
+Expected: PASS, 133 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2534,7 +2534,7 @@ init();
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 127 tests.
+Expected: PASS, 133 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2733,4 +2733,4 @@ git commit -m "test: verify page classification against real captures, add READM
 
 **Two deliberate departures from the spec**, both documented above with reasoning: `detect` returns five states rather than four, and `usernameSelector` is replaced by a generic resolver.
 
-**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 46, T4 → 66, T5 → 82, T8 → 127. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
+**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 46, T4 → 72, T5 → 88, T8 → 133. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
