@@ -31,7 +31,15 @@
   ],
   "web_accessible_resources": [
     {
-      "resources": ["src/content/runner.js", "src/sites/*.js", "src/lib/*.js"],
+      "resources": [
+        "src/content/runner.js",
+        "src/sites/index.js",
+        "src/sites/sfpl.js",
+        "src/sites/goodreads.js",
+        "src/sites/storygraph.js",
+        "src/lib/query.js",
+        "src/lib/detect-helpers.js"
+      ],
       "matches": [
         "https://sfpl.bibliocommons.com/*",
         "https://www.goodreads.com/*",
