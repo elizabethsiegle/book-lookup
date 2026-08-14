@@ -97,6 +97,32 @@ describe('findUsernameField', () => {
     const doc = docFrom('<form><input type="text" id="user"></form>');
     expect(findUsernameField(doc)).toBeNull();
   });
+
+  it('handles a formless login widget, as single-page apps render', () => {
+    const doc = docFrom(`
+      <header><input type="text" id="sitesearch"></header>
+      <div id="login">
+        <input type="email" id="email">
+        <input type="password" id="pw">
+      </div>`);
+    expect(findUsernameField(doc).id).toBe('email');
+  });
+
+  it('walks past an intermediate wrapper to find the candidate', () => {
+    const doc = docFrom(`
+      <div id="login">
+        <div class="row"><input type="email" id="email"></div>
+        <div class="row"><input type="password" id="pw"></div>
+      </div>`);
+    expect(findUsernameField(doc).id).toBe('email');
+  });
+
+  it('returns null rather than focusing a header search box on a formless password-only page', () => {
+    const doc = docFrom(`
+      <header><input type="text" id="sitesearch"></header>
+      <div id="reauth"><input type="password" id="pw"></div>`);
+    expect(findUsernameField(doc)).toBeNull();
+  });
 });
 
 describe('hasChallenge', () => {
@@ -114,6 +140,20 @@ describe('hasChallenge', () => {
 
   it('detects a one-time-code field', () => {
     expect(hasChallenge(docFrom('<input autocomplete="one-time-code">'))).toBe(true);
+  });
+
+  it('detects a named two-factor field', () => {
+    expect(hasChallenge(docFrom('<input name="otp">'))).toBe(true);
+    expect(hasChallenge(docFrom('<input name="otp_attempt">'))).toBe(true);
+    expect(hasChallenge(docFrom('<input name="user_otp">'))).toBe(true);
+    expect(hasChallenge(docFrom('<input name="two_factor_code">'))).toBe(true);
+  });
+
+  it('does not trip on an innocent name that merely contains "otp"', () => {
+    // An unanchored *="otp" match fires on this, and a false challenge makes
+    // the extension refuse to act on a perfectly good page.
+    expect(hasChallenge(docFrom('<input name="hotpad">'))).toBe(false);
+    expect(hasChallenge(docFrom('<input name="depotplan">'))).toBe(false);
   });
 
   it('returns false for an ordinary page', () => {
