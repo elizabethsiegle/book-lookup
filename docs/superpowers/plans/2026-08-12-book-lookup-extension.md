@@ -1775,9 +1775,16 @@ Create `test/security-invariants.test.js`:
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+// Paths are built with node:path rather than `new URL(..., import.meta.url)`:
+// Vite's import-analysis plugin statically rewrites that call shape, even with
+// a template-literal argument, mangling the dynamic segment. Task 4 hit this
+// and established this pattern; keep it consistent.
+const PROJECT_ROOT = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 
 function source(relativePath) {
-  return readFileSync(fileURLToPath(new URL(`../${relativePath}`, import.meta.url)), 'utf8');
+  return readFileSync(path.join(PROJECT_ROOT, relativePath), 'utf8');
 }
 
 /**
@@ -2535,8 +2542,10 @@ Append to `test/sites-detect.test.js`:
 ```js
 import { existsSync } from 'node:fs';
 
+// FIXTURES_DIR is already defined at the top of this file (Task 4). Reuse it —
+// do not reintroduce `new URL(..., import.meta.url)`, which Vite rewrites.
 function fixturePath(name) {
-  return fileURLToPath(new URL(`./fixtures/${name}.html`, import.meta.url));
+  return path.join(FIXTURES_DIR, `${name}.html`);
 }
 
 const REAL_CASES = [
