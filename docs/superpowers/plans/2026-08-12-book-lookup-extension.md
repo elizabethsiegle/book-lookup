@@ -563,6 +563,32 @@ describe('findUsernameField', () => {
     const doc = docFrom('<form><input type="text" id="user"></form>');
     expect(findUsernameField(doc)).toBeNull();
   });
+
+  it('handles a formless login widget, as single-page apps render', () => {
+    const doc = docFrom(`
+      <header><input type="text" id="sitesearch"></header>
+      <div id="login">
+        <input type="email" id="email">
+        <input type="password" id="pw">
+      </div>`);
+    expect(findUsernameField(doc).id).toBe('email');
+  });
+
+  it('walks past an intermediate wrapper to find the candidate', () => {
+    const doc = docFrom(`
+      <div id="login">
+        <div class="row"><input type="email" id="email"></div>
+        <div class="row"><input type="password" id="pw"></div>
+      </div>`);
+    expect(findUsernameField(doc).id).toBe('email');
+  });
+
+  it('returns null rather than focusing a header search box on a formless password-only page', () => {
+    const doc = docFrom(`
+      <header><input type="text" id="sitesearch"></header>
+      <div id="reauth"><input type="password" id="pw"></div>`);
+    expect(findUsernameField(doc)).toBeNull();
+  });
 });
 
 describe('hasChallenge', () => {
@@ -580,6 +606,20 @@ describe('hasChallenge', () => {
 
   it('detects a one-time-code field', () => {
     expect(hasChallenge(docFrom('<input autocomplete="one-time-code">'))).toBe(true);
+  });
+
+  it('detects a named two-factor field', () => {
+    expect(hasChallenge(docFrom('<input name="otp">'))).toBe(true);
+    expect(hasChallenge(docFrom('<input name="otp_attempt">'))).toBe(true);
+    expect(hasChallenge(docFrom('<input name="user_otp">'))).toBe(true);
+    expect(hasChallenge(docFrom('<input name="two_factor_code">'))).toBe(true);
+  });
+
+  it('does not trip on an innocent name that merely contains "otp"', () => {
+    // An unanchored *="otp" match fires on this, and a false challenge makes
+    // the extension refuse to act on a perfectly good page.
+    expect(hasChallenge(docFrom('<input name="hotpad">'))).toBe(false);
+    expect(hasChallenge(docFrom('<input name="depotplan">'))).toBe(false);
   });
 
   it('returns false for an ordinary page', () => {
@@ -631,8 +671,16 @@ const CHALLENGE_SELECTORS = [
   '#challenge-running',
   '#cf-challenge-running',
   'input[autocomplete="one-time-code"]',
-  'input[name*="otp" i]',
+  // Anchored rather than a bare `*="otp"` substring: an unanchored match
+  // trips on innocent names like "hotpad", and a false challenge makes the
+  // extension refuse to act on a perfectly good page.
+  'input[name="otp"]',
+  'input[name^="otp_"]',
+  'input[name$="_otp"]',
+  'input[name*="otp_attempt" i]',
+  'input[name*="one_time" i]',
   'input[name*="two_factor" i]',
+  'input[name*="two-factor" i]',
 ];
 
 /**
@@ -671,21 +719,55 @@ export function findPasswordInput(doc) {
   return null;
 }
 
+const CANDIDATE_SELECTOR = 'input[type="text"], input[type="email"], input:not([type])';
+
+function candidatesWithin(root) {
+  return [...root.querySelectorAll(CANDIDATE_SELECTOR)].filter(isUsable);
+}
+
+/**
+ * The element to search for a username field.
+ *
+ * A real <form> is the fast path and covers every login page these three
+ * sites currently render. Failing that — single-page apps increasingly ship
+ * formless login widgets — walk up from the password field to the nearest
+ * ancestor that also holds a candidate.
+ *
+ * The walk deliberately stops short of <body>. At document scope the nearest
+ * "candidate" is as likely to be the site's own search box as a username
+ * field, and focusing the wrong box is worse than focusing nothing: it puts
+ * the cursor somewhere the user did not ask for it and Chrome's autofill
+ * never appears. Returning null there is the project's uncertainty-resolves-
+ * to-inaction rule doing its job.
+ */
+function loginScopeFor(password) {
+  const form = password.closest('form');
+  if (form) return form;
+
+  const doc = password.ownerDocument;
+  let scope = password.parentElement;
+  while (scope && scope !== doc.body && scope !== doc.documentElement) {
+    if (candidatesWithin(scope).length) return scope;
+    scope = scope.parentElement;
+  }
+  return null;
+}
+
 /**
  * The username/email field belonging to the login form.
  *
- * Scoped to the password field's own form so a site-wide search box in the
- * header is never mistaken for a username field. Prefers the nearest candidate
- * *preceding* the password input, matching how login forms are ordered.
+ * Scoped so a site-wide search box in the page header is never mistaken for a
+ * username field. Prefers the nearest candidate *preceding* the password
+ * input, matching how login forms are ordered.
  */
 export function findUsernameField(doc) {
   const password = findPasswordInput(doc);
   if (!password) return null;
 
-  const scope = password.closest('form') || doc;
-  const candidates = [
-    ...scope.querySelectorAll('input[type="text"], input[type="email"], input:not([type])'),
-  ].filter(isUsable);
+  const scope = loginScopeFor(password);
+  if (!scope) return null;
+
+  const candidates = candidatesWithin(scope);
 
   let nearestPreceding = null;
   for (const candidate of candidates) {
