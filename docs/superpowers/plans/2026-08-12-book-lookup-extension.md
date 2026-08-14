@@ -787,14 +787,14 @@ export function hasChallenge(doc) {
 - [ ] **Step 4: Run the test to verify it passes**
 
 Run: `npm test -- test/detect-helpers.test.js`
-Expected: PASS, 20 tests.
+Expected: PASS, 25 tests.
 
 If `DOMParser` is undefined, confirm `vitest.config.js` sets `environment: 'jsdom'` — that is the cause.
 
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 41 tests.
+Expected: PASS, 46 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -1213,7 +1213,7 @@ Expected: PASS, 20 tests.
 - [ ] **Step 10: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 61 tests.
+Expected: PASS, 66 tests.
 
 - [ ] **Step 11: Commit**
 
@@ -1477,7 +1477,7 @@ Expected: PASS, 16 tests.
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 77 tests.
+Expected: PASS, 82 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -1585,7 +1585,7 @@ export async function savePrefs(partial) {
 - [ ] **Step 3: Run the full suite to confirm nothing regressed**
 
 Run: `npm test`
-Expected: PASS, 77 tests.
+Expected: PASS, 82 tests.
 
 - [ ] **Step 4: Commit**
 
@@ -1744,7 +1744,7 @@ Expected: a `ReferenceError` mentioning `chrome`. That proves the file parses an
 - [ ] **Step 3: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 77 tests.
+Expected: PASS, 82 tests.
 
 - [ ] **Step 4: Commit**
 
@@ -1964,7 +1964,7 @@ If the `.value` assertion fails on a file you did not expect, do not weaken the 
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 122 tests.
+Expected: PASS, 127 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2260,7 +2260,7 @@ Expected: three tabs open. SFPL is focused and shows results for that title. Goo
 - [ ] **Step 6: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 122 tests.
+Expected: PASS, 127 tests.
 
 - [ ] **Step 7: Commit**
 
@@ -2491,7 +2491,7 @@ init();
 - [ ] **Step 5: Run the full suite**
 
 Run: `npm test`
-Expected: PASS, 122 tests.
+Expected: PASS, 127 tests.
 
 - [ ] **Step 6: Commit**
 
@@ -2688,4 +2688,4 @@ git commit -m "test: verify page classification against real captures, add READM
 
 **Two deliberate departures from the spec**, both documented above with reasoning: `detect` returns five states rather than four, and `usernameSelector` is replaced by a generic resolver.
 
-**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 41, T4 → 61, T5 → 77, T8 → 122. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
+**Running test counts** (cumulative, to catch a silently skipped file): T1 → 13, T2 → 21, T3 → 46, T4 → 66, T5 → 82, T8 → 127. Tasks 6, 7, 9 and 10 add no automated tests and must leave the count at its previous value. These counts are bookkeeping, not requirements: if an actual count differs, recount the `it` blocks and correct this line — a mismatch is only a defect if a whole test file failed to run.
