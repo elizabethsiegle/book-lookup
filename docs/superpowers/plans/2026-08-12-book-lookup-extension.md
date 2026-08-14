@@ -1043,6 +1043,30 @@ describe('challenge detection outranks everything, on every adapter', () => {
   });
 });
 
+describe('a results path must be the path, not merely its prefix', () => {
+  const NEAR_MISSES = [
+    [sfpl, 'https://sfpl.bibliocommons.com/v2/searchers/foo'],
+    [goodreads, 'https://www.goodreads.com/searchers/foo'],
+    [goodreads, 'https://www.goodreads.com/book/showcase/foo'],
+    [storygraph, 'https://app.thestorygraph.com/browsers/foo'],
+    [storygraph, 'https://app.thestorygraph.com/bookshelves/foo'],
+  ];
+
+  it.each(NEAR_MISSES)('does not classify %o at %s as results', (adapter, url) => {
+    const doc = new DOMParser().parseFromString('<main><h1>Something else</h1></main>', 'text/html');
+    expect(adapter.detect(doc, url)).toBe('unknown');
+  });
+
+  it('still classifies the real results paths and their descendants', () => {
+    const doc = new DOMParser().parseFromString('<main><h1>Results</h1></main>', 'text/html');
+    expect(sfpl.detect(doc, SFPL_SEARCH)).toBe('results');
+    expect(goodreads.detect(doc, GR_SEARCH)).toBe('results');
+    expect(goodreads.detect(doc, 'https://www.goodreads.com/book/show/12345-dune')).toBe('results');
+    expect(storygraph.detect(doc, SG_BROWSE)).toBe('results');
+    expect(storygraph.detect(doc, 'https://app.thestorygraph.com/books/abc-123')).toBe('results');
+  });
+});
+
 describe('registry', () => {
   it('exposes all three adapters in a stable order', () => {
     expect(ADAPTER_IDS).toEqual(['sfpl', 'goodreads', 'storygraph']);
@@ -1098,6 +1122,18 @@ Append to that file:
  * The shared classification ladder every adapter walks, in a fixed order.
  * `isResultsUrl` is the only per-site variation.
  */
+/**
+ * True when `pathname` is exactly `prefix`, or a path segment beneath it.
+ *
+ * A bare `pathname.startsWith('/search')` also matches `/searchers`, which
+ * would classify an unrelated page as results — silently clearing a pending
+ * intent on a page that is nothing of the kind. `pathname` never carries a
+ * query string, so exact-or-slash is the whole boundary.
+ */
+export function isPathUnder(pathname, prefix) {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
 export function classify(doc, url, isResultsUrl) {
   if (hasChallenge(doc)) return 'challenge';
   if (findPasswordInput(doc)) return 'login';
@@ -1120,14 +1156,14 @@ export function classify(doc, url, isResultsUrl) {
 Add the import at the top:
 
 ```js
-import { classify } from '../lib/detect-helpers.js';
+import { classify, isPathUnder } from '../lib/detect-helpers.js';
 ```
 
 and this property to the `sfpl` object:
 
 ```js
   detect(doc, url) {
-    return classify(doc, url, (pathname) => pathname.startsWith('/v2/search'));
+    return classify(doc, url, (pathname) => isPathUnder(pathname, '/v2/search'));
   },
 ```
 
@@ -1136,7 +1172,7 @@ and this property to the `sfpl` object:
 Add the import at the top:
 
 ```js
-import { classify } from '../lib/detect-helpers.js';
+import { classify, isPathUnder } from '../lib/detect-helpers.js';
 ```
 
 and this property to the `goodreads` object:
@@ -1148,7 +1184,7 @@ and this property to the `goodreads` object:
     return classify(
       doc,
       url,
-      (pathname) => pathname.startsWith('/search') || pathname.startsWith('/book/show/')
+      (pathname) => isPathUnder(pathname, '/search') || isPathUnder(pathname, '/book/show')
     );
   },
 ```
@@ -1158,7 +1194,7 @@ and this property to the `goodreads` object:
 Add the import at the top:
 
 ```js
-import { classify } from '../lib/detect-helpers.js';
+import { classify, isPathUnder } from '../lib/detect-helpers.js';
 ```
 
 and this property to the `storygraph` object:
@@ -1168,7 +1204,7 @@ and this property to the `storygraph` object:
     return classify(
       doc,
       url,
-      (pathname) => pathname.startsWith('/browse') || pathname.startsWith('/books/')
+      (pathname) => isPathUnder(pathname, '/browse') || isPathUnder(pathname, '/books')
     );
   },
 ```
