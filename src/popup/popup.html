@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>Book Lookup</title>
+  </head>
+  <body>
+    <form id="search-form" autocomplete="off">
+      <h1>Book Lookup</h1>
+
+      <input
+        type="search"
+        id="query"
+        name="query"
+        placeholder="Title or author…"
+        aria-label="Book title or author"
+        autofocus
+      />
+
+      <div class="modes" role="radiogroup" aria-label="Search by">
+        <label><input type="radio" name="mode" value="title" checked /><span>Title</span></label>
+        <label><input type="radio" name="mode" value="author" /><span>Author</span></label>
+      </div>
+
+      <button type="submit" id="search-all" class="primary">Search all</button>
+
+      <div class="sites" id="sites"></div>
+
+      <p class="note" id="mode-note" hidden>
+        StoryGraph searches titles, authors and series together — it has no separate mode.
+      </p>
+    </form>
+
+    <script type="module" src="popup.js"></script>
+  </body>
+</html>

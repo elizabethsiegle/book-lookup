@@ -1,0 +1,127 @@
+:root {
+  --paper: #fbf7f0;
+  --ink: #23201c;
+  --muted: #6f6659;
+  --rule: #e2d9cb;
+  --accent: #7a3d2e;
+  --accent-ink: #fdfaf5;
+  color-scheme: light;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  width: 320px;
+  margin: 0;
+  padding: 16px;
+  background: var(--paper);
+  color: var(--ink);
+  font: 14px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+h1 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+#query {
+  width: 100%;
+  padding: 10px 12px;
+  font-size: 15px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+}
+
+#query:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.modes {
+  display: flex;
+  gap: 6px;
+  margin: 10px 0 12px;
+}
+
+.modes label { flex: 1; }
+.modes input { position: absolute; opacity: 0; pointer-events: none; }
+
+.modes span {
+  display: block;
+  padding: 7px 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--muted);
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+  cursor: pointer;
+}
+
+.modes input:checked + span {
+  color: var(--accent-ink);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+
+.modes input:focus-visible + span {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+  border-radius: 8px;
+}
+
+.primary {
+  width: 100%;
+  padding: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: 1px solid var(--accent);
+}
+
+.primary:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.sites {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sites button {
+  padding: 8px 4px;
+  font-size: 12px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--rule);
+}
+
+.sites button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.note {
+  margin: 12px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid var(--rule);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--muted);
+}
