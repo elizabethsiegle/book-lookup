@@ -1,4 +1,5 @@
 import { normalizeQuery, normalizeMode } from '../lib/query.js';
+import { classify } from '../lib/detect-helpers.js';
 
 export const sfpl = {
   id: 'sfpl',
@@ -11,5 +12,9 @@ export const sfpl = {
       searchType: normalizeMode(mode),
     });
     return `https://sfpl.bibliocommons.com/v2/search?${params}`;
+  },
+
+  detect(doc, url) {
+    return classify(doc, url, (pathname) => pathname.startsWith('/v2/search'));
   },
 };

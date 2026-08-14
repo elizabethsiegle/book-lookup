@@ -1,0 +1,12 @@
+<!doctype html>
+<html><body>
+  <header><input type="search" id="sitesearch" placeholder="Search the catalogue"></header>
+  <form action="/user/login" method="post">
+    <input type="hidden" name="authenticity_token">
+    <label for="name">Library card number or username</label>
+    <input type="text" id="name" name="name">
+    <label for="user_pin">PIN</label>
+    <input type="password" id="user_pin" name="user_pin">
+    <button type="submit">Log In</button>
+  </form>
+</body></html>

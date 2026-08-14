@@ -127,3 +127,23 @@ export function findUsernameField(doc) {
 export function hasChallenge(doc) {
   return matchesAny(doc, CHALLENGE_SELECTORS);
 }
+
+/**
+ * The shared classification ladder every adapter walks, in a fixed order.
+ * `isResultsUrl` is the only per-site variation.
+ */
+export function classify(doc, url, isResultsUrl) {
+  if (hasChallenge(doc)) return 'challenge';
+  if (findPasswordInput(doc)) return 'login';
+
+  let pathname = '';
+  try {
+    pathname = new URL(url).pathname;
+  } catch {
+    pathname = '';
+  }
+  if (pathname && isResultsUrl(pathname)) return 'results';
+
+  if (matchesAny(doc, AUTHED_SELECTORS)) return 'authed';
+  return 'unknown';
+}
