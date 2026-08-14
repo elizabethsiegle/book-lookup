@@ -2119,6 +2119,8 @@ This is the surface that gets demoed, so it should look deliberate rather than d
 
       <div class="sites" id="sites"></div>
 
+      <p class="error" id="dispatch-error" role="alert" hidden></p>
+
       <p class="note" id="mode-note" hidden>
         StoryGraph searches titles, authors and series together — it has no separate mode.
       </p>
@@ -2259,6 +2261,17 @@ button {
   line-height: 1.4;
   color: var(--muted);
 }
+
+.error {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.35;
+  color: #7f1d1d;
+  background: #fdecec;
+  border: 1px solid #f0c4c4;
+  border-radius: 7px;
+}
 ```
 
 - [ ] **Step 3: Create `src/popup/popup.js`**
@@ -2273,6 +2286,7 @@ const queryInput = document.getElementById('query');
 const searchAll = document.getElementById('search-all');
 const sitesRow = document.getElementById('sites');
 const modeNote = document.getElementById('mode-note');
+const dispatchError = document.getElementById('dispatch-error');
 
 let enabledSites = ADAPTERS.map((adapter) => adapter.id);
 
@@ -2300,8 +2314,21 @@ async function dispatch(sites) {
   if (!query) return;
 
   const mode = currentMode();
+  // Saved before the send, deliberately: if the dispatch fails, the query the
+  // user typed is still worth remembering for the retry.
   await savePrefs({ mode, lastQuery: query });
-  await chrome.runtime.sendMessage({ type: 'search', query, mode, sites });
+
+  try {
+    await chrome.runtime.sendMessage({ type: 'search', query, mode, sites });
+  } catch {
+    // The service worker can be asleep, or the extension freshly reloaded
+    // during development. Say so and leave the popup open — closing on a
+    // silent failure looks identical to success and loses the query.
+    dispatchError.textContent = "Couldn't reach the extension. Try again.";
+    dispatchError.hidden = false;
+    return;
+  }
+
   window.close();
 }
 
@@ -2321,7 +2348,10 @@ form.addEventListener('submit', (event) => {
   dispatch(enabledSites);
 });
 
-queryInput.addEventListener('input', refreshEnabledState);
+queryInput.addEventListener('input', () => {
+  dispatchError.hidden = true;
+  refreshEnabledState();
+});
 
 async function init() {
   buildSiteButtons();
