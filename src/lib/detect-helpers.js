@@ -132,6 +132,18 @@ export function hasChallenge(doc) {
  * The shared classification ladder every adapter walks, in a fixed order.
  * `isResultsUrl` is the only per-site variation.
  */
+/**
+ * True when `pathname` is exactly `prefix`, or a path segment beneath it.
+ *
+ * A bare `pathname.startsWith('/search')` also matches `/searchers`, which
+ * would classify an unrelated page as results — silently clearing a pending
+ * intent on a page that is nothing of the kind. `pathname` never carries a
+ * query string, so exact-or-slash is the whole boundary.
+ */
+export function isPathUnder(pathname, prefix) {
+  return pathname === prefix || pathname.startsWith(`${prefix}/`);
+}
+
 export function classify(doc, url, isResultsUrl) {
   if (hasChallenge(doc)) return 'challenge';
   if (findPasswordInput(doc)) return 'login';

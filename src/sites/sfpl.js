@@ -1,5 +1,5 @@
 import { normalizeQuery, normalizeMode } from '../lib/query.js';
-import { classify } from '../lib/detect-helpers.js';
+import { classify, isPathUnder } from '../lib/detect-helpers.js';
 
 export const sfpl = {
   id: 'sfpl',
@@ -15,6 +15,6 @@ export const sfpl = {
   },
 
   detect(doc, url) {
-    return classify(doc, url, (pathname) => pathname.startsWith('/v2/search'));
+    return classify(doc, url, (pathname) => isPathUnder(pathname, '/v2/search'));
   },
 };

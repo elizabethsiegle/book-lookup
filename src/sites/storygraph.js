@@ -1,5 +1,5 @@
 import { normalizeQuery } from '../lib/query.js';
-import { classify } from '../lib/detect-helpers.js';
+import { classify, isPathUnder } from '../lib/detect-helpers.js';
 
 export const storygraph = {
   id: 'storygraph',
@@ -22,7 +22,7 @@ export const storygraph = {
     return classify(
       doc,
       url,
-      (pathname) => pathname.startsWith('/browse') || pathname.startsWith('/books/')
+      (pathname) => isPathUnder(pathname, '/browse') || isPathUnder(pathname, '/books')
     );
   },
 };

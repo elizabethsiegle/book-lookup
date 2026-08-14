@@ -92,6 +92,30 @@ describe('challenge detection outranks everything, on every adapter', () => {
   });
 });
 
+describe('a results path must be the path, not merely its prefix', () => {
+  const NEAR_MISSES = [
+    [sfpl, 'https://sfpl.bibliocommons.com/v2/searchers/foo'],
+    [goodreads, 'https://www.goodreads.com/searchers/foo'],
+    [goodreads, 'https://www.goodreads.com/book/showcase/foo'],
+    [storygraph, 'https://app.thestorygraph.com/browsers/foo'],
+    [storygraph, 'https://app.thestorygraph.com/bookshelves/foo'],
+  ];
+
+  it.each(NEAR_MISSES)('does not classify %o at %s as results', (adapter, url) => {
+    const doc = new DOMParser().parseFromString('<main><h1>Something else</h1></main>', 'text/html');
+    expect(adapter.detect(doc, url)).toBe('unknown');
+  });
+
+  it('still classifies the real results paths and their descendants', () => {
+    const doc = new DOMParser().parseFromString('<main><h1>Results</h1></main>', 'text/html');
+    expect(sfpl.detect(doc, SFPL_SEARCH)).toBe('results');
+    expect(goodreads.detect(doc, GR_SEARCH)).toBe('results');
+    expect(goodreads.detect(doc, 'https://www.goodreads.com/book/show/12345-dune')).toBe('results');
+    expect(storygraph.detect(doc, SG_BROWSE)).toBe('results');
+    expect(storygraph.detect(doc, 'https://app.thestorygraph.com/books/abc-123')).toBe('results');
+  });
+});
+
 describe('registry', () => {
   it('exposes all three adapters in a stable order', () => {
     expect(ADAPTER_IDS).toEqual(['sfpl', 'goodreads', 'storygraph']);
