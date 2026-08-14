@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { sfpl } from '../src/sites/sfpl.js';
@@ -152,6 +152,38 @@ describe('registry', () => {
       expect(typeof adapter.hostMatch).toBe('string');
       expect(typeof adapter.buildSearchUrl).toBe('function');
       expect(typeof adapter.detect).toBe('function');
+    }
+  });
+});
+
+// FIXTURES_DIR is already defined at the top of this file (Task 4). Reuse it —
+// do not reintroduce `new URL(..., import.meta.url)`, which Vite rewrites.
+function fixturePath(name) {
+  return path.join(FIXTURES_DIR, `${name}.html`);
+}
+
+const REAL_CASES = [
+  ['real-sfpl-authed-results', sfpl, SFPL_SEARCH, 'results'],
+  ['real-sfpl-login', sfpl, 'https://sfpl.bibliocommons.com/user/login', 'login'],
+  ['real-goodreads-authed-results', goodreads, GR_SEARCH, 'results'],
+  ['real-goodreads-login', goodreads, 'https://www.goodreads.com/user/sign_in', 'login'],
+  ['real-storygraph-authed-results', storygraph, SG_BROWSE, 'results'],
+  ['real-storygraph-login', storygraph, 'https://app.thestorygraph.com/users/sign_in', 'login'],
+];
+
+describe('real captured pages', () => {
+  for (const [name, adapter, url, expected] of REAL_CASES) {
+    const run = existsSync(fixturePath(name)) ? it : it.skip;
+    run(`${name} classifies as ${expected}`, () => {
+      expect(adapter.detect(fixture(name), url)).toBe(expected);
+    });
+  }
+
+  it('recognizes the signed-in state on every real results capture', () => {
+    for (const [name, adapter] of REAL_CASES.filter(([n]) => n.includes('authed'))) {
+      if (!existsSync(fixturePath(name))) continue;
+      // Same document, a non-results url: the sign-out marker alone must carry it.
+      expect(adapter.detect(fixture(name), `https://${adapter.hostMatch}/`)).toBe('authed');
     }
   });
 });
