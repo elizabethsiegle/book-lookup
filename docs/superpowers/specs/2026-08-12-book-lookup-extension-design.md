@@ -126,13 +126,29 @@ background decides:
 
 ### One automatic navigation, ever
 
-Three independent guards make looping structurally impossible:
+Two independent guards make looping structurally impossible, plus one cleanup:
 
 - the `resumed` flag — an intent can trigger at most one navigation
 - a 10-minute expiry
-- intents cleared on tab close, and on navigation off the site's domain
+- intents cleared when the tab closes (`tabs.onRemoved`)
 
 There is no code path that navigates twice for one intent.
+
+**Corrected during the final review:** an earlier draft listed a fourth guard,
+clearing the intent when the tab navigates off the site's domain. That guard is
+not implementable under this extension's permissions and was removed rather than
+left as dead code. Without the `tabs` permission Chrome withholds
+`changeInfo.url` for exactly the off-host navigations such a handler would need
+to see, so it can never fire. Acquiring `tabs` to make it work would cost more —
+that permission grants URL visibility across every tab — than the guard is worth,
+given the two real guards already make double-navigation impossible.
+
+**Also corrected:** a challenge page must NOT clear the pending search.
+StoryGraph sits behind Cloudflare, whose interstitial renders *before* the real
+page. Clearing on challenge meant the interstitial destroyed the pending search,
+so the subsequent login had nothing to resume and the feature silently no-opped
+on the one site most likely to need it. A challenge now badges `!` and leaves the
+intent alone.
 
 ### Where state lives
 
@@ -199,7 +215,7 @@ The badge is the only notification channel, set per-tab via
 | Situation | Badge | Behavior |
 |---|---|---|
 | Login form found | 🔑 amber | Focus username field. Stop. |
-| CAPTCHA or 2FA prompt | `!` red | Clear intent. Touch nothing. |
+| CAPTCHA or 2FA prompt | `!` red | Touch nothing, but KEEP the pending search. |
 | Page unrecognized (redesign) | `?` grey | Clear intent. Touch nothing. |
 | Results reached | cleared | — |
 
