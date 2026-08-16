@@ -26,8 +26,10 @@ function refreshEnabledState() {
     button.disabled = !ready;
   }
 
-  const storygraphInvolved = enabledSites.includes('storygraph');
-  modeNote.hidden = !storygraphInvolved;
+  const modeIgnoringSiteInvolved = ADAPTERS.some(
+    (adapter) => adapter.ignoresMode && enabledSites.includes(adapter.id)
+  );
+  modeNote.hidden = !modeIgnoringSiteInvolved;
 }
 
 async function dispatch(sites) {
