@@ -52,7 +52,9 @@ export function decide(intent, { state, now }) {
       return { ...NOTHING };
 
     case 'challenge':
-      return { action: 'none', targetUrl: null, badge: 'ALERT', intent: null };
+      // Cloudflare's interstitial precedes the real page. Clearing here would
+      // destroy the pending search before the login it is meant to survive.
+      return { action: 'none', targetUrl: null, badge: 'ALERT', intent: live };
 
     case 'unknown':
     default:

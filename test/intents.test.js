@@ -96,8 +96,22 @@ describe('decide: authed', () => {
 });
 
 describe('decide: challenge', () => {
-  it('badges ALERT, clears the intent, and takes no action', () => {
-    expect(decide(freshIntent(), { state: 'challenge', now: NOW })).toEqual({
+  it('badges ALERT, takes no action, and preserves a live intent for the login that follows', () => {
+    const intent = freshIntent();
+    expect(decide(intent, { state: 'challenge', now: NOW })).toEqual({
+      action: 'none', targetUrl: null, badge: 'ALERT', intent,
+    });
+  });
+
+  it('still clears an expired intent', () => {
+    const stale = freshIntent();
+    expect(decide(stale, { state: 'challenge', now: NOW + INTENT_TTL_MS + 1 })).toEqual({
+      action: 'none', targetUrl: null, badge: 'ALERT', intent: null,
+    });
+  });
+
+  it('is harmless with no intent at all', () => {
+    expect(decide(null, { state: 'challenge', now: NOW })).toEqual({
       action: 'none', targetUrl: null, badge: 'ALERT', intent: null,
     });
   });
@@ -129,8 +143,29 @@ describe('the no-loop guarantee', () => {
     expect(resumes).toBe(1);
   });
 
-  it('cannot resume after a challenge cleared the intent', () => {
-    const cleared = decide(freshIntent(), { state: 'challenge', now: NOW }).intent;
-    expect(decide(cleared, { state: 'authed', now: NOW + 1_000 }).action).toBe('none');
+  it('survives a Cloudflare challenge and a login page, then resumes exactly once', () => {
+    // The real StoryGraph flow: search → Cloudflare interstitial (challenge) →
+    // login page → authed. The intent must live through all of it and fire
+    // the resume exactly once when authed finally arrives.
+    let intent = freshIntent();
+
+    let decision = decide(intent, { state: 'challenge', now: NOW + 1_000 });
+    expect(decision.action).toBe('none');
+    intent = decision.intent;
+    expect(intent).not.toBeNull();
+
+    decision = decide(intent, { state: 'login', now: NOW + 2_000 });
+    expect(decision.action).toBe('focus');
+    intent = decision.intent;
+    expect(intent).not.toBeNull();
+
+    decision = decide(intent, { state: 'authed', now: NOW + 3_000 });
+    expect(decision.action).toBe('resume');
+    expect(decision.targetUrl).toBe(TARGET);
+    intent = decision.intent;
+
+    // A second authed report (e.g. a redirect landing again) must not resume twice.
+    decision = decide(intent, { state: 'authed', now: NOW + 4_000 });
+    expect(decision.action).toBe('none');
   });
 });
