@@ -21,10 +21,20 @@ Chrome deliberately blocks extensions from filling password fields without a
 genuine user click. That is anti-phishing protection working correctly, so
 zero-click login is not achievable and is not attempted here.
 
-The content script has exactly two side effects available to it: `focus()` on a
-username field, and sending a message to the background worker. It never reads
-a field's contents and never navigates. `test/security-invariants.test.js`
-fails the build if that stops being true.
+The content script, as written today, has exactly two side effects available
+to it: `focus()` on a username field, and sending a message to the background
+worker. It never reads a field's contents and never navigates.
+`test/security-invariants.test.js` greps the source for the obvious forms of
+those violations (`.value`, `fetch(`, `location.href =`, and similar) and
+fails the build if one of them regresses in. It is a regression guard, not a
+proof of safety: it is a grep over source text, not a sandboxed capability
+check, so it catches accidental slips but not deliberate circumvention.
+Bracket-notation access (`el['value']`), destructuring (`const {value} = el`),
+reading through `Object.getOwnPropertyDescriptor(...).get.call(el)`, and other
+disguised forms of the same patterns all pass it untouched — this was verified
+directly by injecting 23 such constructs into the content script and watching
+all 23 pass. Treat the test as catching carelessness, not as a security
+boundary.
 
 ## Permissions
 
@@ -48,6 +58,11 @@ npm test
 
 Tested: URL construction for all three sites, page classification against saved
 HTML, the pending-intent state machine, and the security invariants above.
+
+**`src/background.js` has no automated tests.** It is exercised only by the
+manual smoke test described below — there is no unit or integration coverage
+of the service worker itself (message routing, intent persistence, badge
+calls, tab creation/update).
 
 **Known gap: `authed` detection is unverified against a real page.** The
 signed-in fixtures in `test/fixtures/` (`sfpl-authed-dashboard.html`,

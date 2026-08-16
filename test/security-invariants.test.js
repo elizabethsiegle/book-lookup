@@ -3,6 +3,18 @@ import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 
+/**
+ * LIMITATION: this file is a grep over source text, not a sandboxed capability
+ * check or a proof of safety. It catches the obvious, accidental forms of the
+ * banned patterns and fails the build on a careless regression — that is all
+ * it promises. Deliberate circumvention passes it untouched: bracket-notation
+ * access (`el['value']`), destructuring (`const {value} = el`), reading
+ * through `Object.getOwnPropertyDescriptor(...).get.call(el)`, and other
+ * disguised equivalents of every pattern below. This was verified directly:
+ * 23 such constructs were injected into runner.js and all 23 passed. Treat
+ * green here as "no known-shape regression," never as "this file is safe."
+ */
+
 // Paths are built with node:path rather than `new URL(..., import.meta.url)`:
 // Vite's import-analysis plugin statically rewrites that call shape, even with
 // a template-literal argument, mangling the dynamic segment. Task 4 hit this
@@ -124,6 +136,22 @@ describe('the content script never exfiltrates', () => {
     expect(text).not.toMatch(/\bfetch\(/);
     expect(text).not.toMatch(/XMLHttpRequest/);
     expect(text).not.toMatch(/\bconsole\.(log|info|warn|debug)\(/);
+  });
+});
+
+describe('the audited file list tracks the manifest', () => {
+  const manifest = JSON.parse(source('manifest.json'));
+
+  it('scans every file the manifest exposes to the page — add a WAR entry, add it here too', () => {
+    const warResources = manifest.web_accessible_resources[0].resources;
+    for (const file of warResources) {
+      expect(
+        IN_PAGE_FILES,
+        `${file} is in manifest.json's web_accessible_resources but missing from ` +
+          `IN_PAGE_FILES in test/security-invariants.test.js — it is reachable from page ` +
+          `context and must be scanned by these invariants.`
+      ).toContain(file);
+    }
   });
 });
 
