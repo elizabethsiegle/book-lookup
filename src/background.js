@@ -1,4 +1,4 @@
-import { ADAPTERS, getAdapter, adapterForUrl } from './sites/index.js';
+import { ADAPTERS, getAdapter } from './sites/index.js';
 import { createIntent, decide } from './lib/intents.js';
 import { BADGE } from './lib/badges.js';
 import { normalizeQuery, normalizeMode } from './lib/query.js';
@@ -42,7 +42,8 @@ async function runSearch({ query, mode, sites }) {
   const cleanMode = normalizeMode(mode);
   if (!cleanQuery) return { opened: 0 };
 
-  const requested = ADAPTERS.filter((adapter) => sites.includes(adapter.id));
+  const siteList = Array.isArray(sites) ? sites : [];
+  const requested = ADAPTERS.filter((adapter) => siteList.includes(adapter.id));
   if (!requested.length) return { opened: 0 };
 
   let opened = 0;
@@ -84,7 +85,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || typeof message !== 'object') return false;
 
   if (message.type === 'search') {
-    runSearch(message).then(sendResponse);
+    runSearch(message).then(sendResponse).catch(() => sendResponse({ opened: 0 }));
     return true;
   }
 
@@ -94,7 +95,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       sendResponse({ focus: false });
       return false;
     }
-    handlePageReport(message, tabId).then(sendResponse);
+    handlePageReport(message, tabId).then(sendResponse).catch(() => sendResponse({ focus: false }));
     return true;
   }
 
@@ -106,12 +107,10 @@ chrome.tabs.onRemoved.addListener((tabId) => {
   writeIntent(tabId, null);
 });
 
-// Abandon an intent when the tab leaves the site it was created for, and clear
-// any stale badge with it.
-chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
-  if (!changeInfo.url) return;
-  if (!adapterForUrl(changeInfo.url)) {
-    writeIntent(tabId, null);
-    setBadge(tabId, null);
-  }
-});
+// There is deliberately no chrome.tabs.onUpdated listener here. Without the
+// `tabs` permission, Chrome withholds changeInfo.url for exactly the
+// off-host navigations such a handler would need to see, so it could never
+// fire for the case it exists to catch. Acquiring `tabs` to make it work
+// would cost more — URL visibility across every tab — than the guard is
+// worth: the `resumed` flag plus the intent TTL already make
+// double-navigation impossible without it.
