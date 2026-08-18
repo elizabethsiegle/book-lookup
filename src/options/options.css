@@ -75,21 +75,6 @@ section .note {
   color: var(--muted);
 }
 
-.cred-disabled-note {
-  margin: 0 0 8px;
-  padding: 6px 8px;
-  font-size: 12px;
-  line-height: 1.4;
-  color: #7f1d1d;
-  background: #fdecec;
-  border: 1px solid #f0c4c4;
-  border-radius: 6px;
-}
-
-.cred-disabled-note[hidden] {
-  display: none;
-}
-
 .cred-field {
   display: block;
   margin-bottom: 8px;

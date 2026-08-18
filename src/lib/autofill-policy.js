@@ -1,37 +1,19 @@
 /**
- * The attempt-limit and guard policy for autofill. Pure functions only — no
- * chrome APIs, no I/O, no clock reads. Everything here is deterministic and
- * unit-testable without a browser.
+ * The location and page-state guard policy for autofill. Pure functions
+ * only — no chrome APIs, no I/O, no clock reads. Everything here is
+ * deterministic and unit-testable without a browser.
  *
- * Library systems lock a card after a small number of failed PIN attempts.
- * Without a hard cap, an extension that resubmits a wrong PIN on every page
- * load would lock the owner out of their own account within seconds. This
- * module is what prevents that — treat it as the deliverable, not as
- * bookkeeping around it.
+ * There used to be an attempt-limit policy here too: automated submission
+ * meant a wrong PIN resubmitted on every page load could lock the owner out
+ * of their own library card, so a consecutive-failure cap existed to stop
+ * that. Automated submission has since been removed entirely (see
+ * docs/superpowers/specs/2026-08-12-book-lookup-extension-design.md,
+ * "Credential handling") — with no auto-submit there are no runaway
+ * attempts, so the cap and everything it guarded against are gone too.
+ * `shouldAutofill`'s remaining job is the location and page-state guards
+ * below, which stop a credential reaching a page that merely happens to
+ * have a password field.
  */
-export const MAX_CONSECUTIVE_FAILURES = 2;
-
-/** `failures >= MAX_CONSECUTIVE_FAILURES` — the shared boundary check. */
-export function isDisabled(failures) {
-  return failures >= MAX_CONSECUTIVE_FAILURES;
-}
-
-/**
- * Folds one autofill outcome into the next failure count.
- *
- * A success resets the count to 0: the credential just worked, so past
- * failures (typos now corrected, a transient site hiccup) no longer predict
- * anything. A failure increments, and `disabled` reports whether the new
- * count has reached the cap — the caller uses this to decide whether to
- * surface `BADGE.AUTOFILL_OFF`.
- */
-export function recordOutcome(failures, outcome) {
-  if (outcome === 'success') {
-    return { failures: 0, disabled: false };
-  }
-  const next = failures + 1;
-  return { failures: next, disabled: isDisabled(next) };
-}
 
 /**
  * Whether autofill should fire on this page load, and why.
@@ -46,22 +28,17 @@ export function recordOutcome(failures, outcome) {
  * 1. **Location guards first** (`insecure`, `wrong-host`, `wrong-path`).
  *    These ask "are we even looking at this site's real login page?" and
  *    the answer must not depend on — or leak anything about — credential
- *    state or failure history. A wrong-host page gets the exact same
- *    refusal whether or not a credential happens to be stored.
+ *    state. A wrong-host page gets the exact same refusal whether or not a
+ *    credential happens to be stored.
  * 2. **Page-state guard next** (`not-login`). Once location is confirmed,
  *    ask whether the page itself is a login form right now; a results or
  *    authed page on the right host/path still must not be filled.
- * 3. **Policy guard** (`disabled`). Only on a real login page does the
- *    attempt-limit history matter, and it is checked before credential
- *    presence: a site that tripped the cap should read as "disabled," not
- *    silently reclassified as "no credential" if the credential is ever
- *    absent for an unrelated reason.
- * 4. **Credential presence last** (`no-credential`). The narrowest, most
+ * 3. **Credential presence last** (`no-credential`). The narrowest, most
  *    mundane reason, so it never masks a more structural refusal above it.
  *
  * `reason: 'ok'` and `fill: true` only when every guard above has passed.
  */
-export function shouldAutofill({ hasCredential, failures, state, url, adapter }) {
+export function shouldAutofill({ hasCredential, state, url, adapter }) {
   let parsed;
   try {
     parsed = new URL(url);
@@ -90,19 +67,15 @@ export function shouldAutofill({ hasCredential, failures, state, url, adapter })
   // Exact path equality, NOT isPathUnder's subpath match. classify() returns
   // 'login' for any page with a usable password field, regardless of path —
   // a password-change or registration page living under
-  // `/user/login/change` would otherwise pass this guard and get filled and
-  // submitted with the stored PIN. The login path itself is never a prefix
-  // worth admitting children of.
+  // `/user/login/change` would otherwise pass this guard and get filled
+  // with the stored PIN. The login path itself is never a prefix worth
+  // admitting children of.
   if (parsed.pathname !== adapter.loginPath) {
     return { fill: false, reason: 'wrong-path' };
   }
 
   if (state !== 'login') {
     return { fill: false, reason: 'not-login' };
-  }
-
-  if (isDisabled(failures)) {
-    return { fill: false, reason: 'disabled' };
   }
 
   if (!hasCredential) {

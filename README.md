@@ -18,8 +18,9 @@ involvement in logging in, unless you opt in to autofill below.
 
 **Autofill is opt-in, per site, and off by default.** In Options, you may save
 a username/card-number and PIN/password for SFPL, Goodreads and/or
-StoryGraph. Doing so lets the extension fill and submit that site's login
-form for you. A site with no saved credential is never autofilled.
+StoryGraph. Doing so lets the extension fill that site's login form for you —
+it fills both fields and stops; it never submits the form, you press Enter.
+A site with no saved credential is never autofilled.
 
 **Saved credentials are stored in `chrome.storage.local`, in plaintext.**
 Chrome extensions have no access to the operating system's keychain, so there
@@ -36,28 +37,26 @@ user actually typed. That asymmetry (write allowed in exactly one file, read
 banned in all of them) is the property that makes opting in defensible, and
 `test/security-invariants.test.js` enforces both halves of it.
 
-**Attempt limiting is a safety feature, not a nicety.** Library systems lock
-a card after a small number of wrong PIN attempts. Autofill submits at most
-once per page load, and after two consecutive failures for a site it disables
-itself for that site — the badge reports it — until you re-save the
-credential, which is treated as your assertion that it's correct now. Without
-this, a stale or mistyped PIN would let the extension lock you out of your
-own library card.
+**Autofill fills the login form; it never submits it — you press Enter.** An
+earlier version filled and submitted automatically, guarded by a cap that
+disabled autofill for a site after two consecutive failures, because a wrong
+PIN resubmitted on every page load could lock the owner out of their own
+library card. That cap went through three rounds of adversarial audit and
+was defeated six different ways across them. Rather than hardening it a
+fourth time, automated submission was removed entirely: with no auto-submit
+there are no runaway attempts, so the cap and every hole in it became
+unnecessary. Filling without submitting eliminates the risk rather than
+mitigating it.
 
 The content script's side effects, as written today, are: `focus()` on a
 username field, sending a message to the background worker, and — in
 `src/content/autofill.js` only — writing a stored credential into a login
-form's fields and submitting it. No content-script file, including
-`autofill.js`, ever reads a field's contents back. `autofill.js` is the one
-exception to "none of them navigate": submitting the login form it just
-filled does navigate the page, which is the entire point of the feature —
-every other navigation primitive (`location.assign`, `location.href =`,
-`window.open`, and so on) stays banned there too, same as everywhere else.
+form's fields. No content-script file, including `autofill.js`, ever reads a
+field's contents back or navigates the page.
 `test/security-invariants.test.js` greps the source for the obvious forms of
-those violations (`.value` reads, `fetch(`, `location.href =`, and similar)
-— including in `autofill.js` itself, for every check except the one
-`submit()` pattern it exists to trigger — and fails the build if one of them
-regresses in. It is a regression guard,
+those violations (`.value` reads, `fetch(`, `location.href =`, `submit()`,
+and similar) — including in `autofill.js` itself, with no exceptions — and
+fails the build if one of them regresses in. It is a regression guard,
 not a proof of safety: it is a grep over source text, not a sandboxed
 capability check, so it catches accidental slips but not deliberate
 circumvention. Bracket-notation access (`el['value']`), destructuring
@@ -80,7 +79,6 @@ security boundary.
 | 🔑 | A login form is showing; the username field has been focused for you. |
 | `!` | The site is showing a CAPTCHA or 2FA challenge. Handle it manually. |
 | `?` | The page wasn't recognized — probably a site redesign. Nothing was touched. |
-| 🔒 | Autofill stopped for this site after two consecutive failed attempts. Re-save the credential in Options to re-enable it. |
 
 ## Tests
 
@@ -92,12 +90,10 @@ npm test
 Tested: URL construction for all three sites, page classification against saved
 HTML, the pending-intent state machine, and the security invariants above.
 
-**`src/background.js`'s autofill hand-out and attempt-cap counting is
-covered** (`test/background.test.js`, driving the real module against a
-stubbed `chrome` global), but nothing else in it is. Search dispatch, intent
-persistence, badge calls outside the autofill path, and tab creation/update
-are exercised only by the manual smoke test described below — there is no
-unit or integration coverage of them.
+**`src/background.js` has no automated tests.** Search dispatch, intent
+persistence, the autofill hand-out decision, badge calls, and tab
+creation/update are exercised only by the manual smoke test described below —
+there is no unit or integration coverage of them.
 
 **Known gap: `authed` detection is unverified against a real page.** The
 signed-in fixtures in `test/fixtures/` (`sfpl-authed-dashboard.html`,

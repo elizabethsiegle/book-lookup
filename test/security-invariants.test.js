@@ -152,31 +152,21 @@ describe('no content-script file reads form data in bulk', () => {
 });
 
 describe('the content script never navigates', () => {
-  it.each(IN_PAGE_FILES)('%s performs no navigation', (file) => {
+  // autofill.js used to be exempt from the `submit()` pattern here: it
+  // legitimately called form.requestSubmit()/form.submit() as the feature
+  // itself. Automated submission has since been removed entirely — the file
+  // fills a form and stops, the owner presses Enter — so that carve-out is
+  // gone too, and autofill.js is scanned by the exact same rule as every
+  // other in-page file, including for `submit()`/`requestSubmit()`.
+  it.each(FILES_INCLUDING_AUTOFILL)('%s performs no navigation', (file) => {
     const text = code(file);
     expect(text).not.toMatch(/location\.assign/);
     expect(text).not.toMatch(/location\.replace/);
     expect(text).not.toMatch(/location\.href\s*=/);
     expect(text).not.toMatch(/window\.open/);
     expect(text).not.toMatch(/\bsubmit\(\)/);
+    expect(text).not.toMatch(/\brequestSubmit\(\)/);
   });
-
-  it.each(WRITE_ALLOWED)(
-    '%s performs no navigation other than the form submission it exists to make',
-    (file) => {
-      // autofill.js legitimately calls form.requestSubmit()/form.submit() —
-      // that IS the feature, and it does navigate the page as a result. The
-      // `submit()` pattern is therefore excluded here (and only here); every
-      // other navigation primitive stays banned even in this file — there is
-      // no legitimate reason for the one file allowed to submit a form to
-      // also redirect the page some other way.
-      const text = code(file);
-      expect(text).not.toMatch(/location\.assign/);
-      expect(text).not.toMatch(/location\.replace/);
-      expect(text).not.toMatch(/location\.href\s*=/);
-      expect(text).not.toMatch(/window\.open/);
-    }
-  );
 });
 
 describe('the content script never exfiltrates', () => {
@@ -281,14 +271,15 @@ describe('the newly-extended bans actually fire on autofill.js, not just on samp
     expect(withInjection('window.open("/y");')).toMatch(/window\.open/);
   });
 
-  it('the real form.requestSubmit()/form.submit() calls do not themselves trip the navigation ban', () => {
-    // Sanity check that excluding the `submit()` pattern for WRITE_ALLOWED is
-    // actually load-bearing: the unmodified file really does contain calls
-    // that shape, and the ban above passes it only because that one pattern
-    // is deliberately excluded for this file and no other.
-    const realCode = code('src/content/autofill.js');
-    expect(realCode).toMatch(/\brequestSubmit\(\)/);
-    expect(realCode).toMatch(/\bsubmit\(\)/);
+  it('an injected form.submit() would fail the navigation ban', () => {
+    // autofill.js no longer submits anything, so the `submit()` carve-out
+    // that used to exempt this file from the navigation ban is gone — this
+    // proves the ban now actually fires here, not just on other files.
+    expect(withInjection('form.submit();')).toMatch(/\bsubmit\(\)/);
+  });
+
+  it('an injected form.requestSubmit() would fail the navigation ban', () => {
+    expect(withInjection('form.requestSubmit();')).toMatch(/\brequestSubmit\(\)/);
   });
 });
 

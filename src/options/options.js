@@ -1,13 +1,6 @@
 import { ADAPTERS } from '../sites/index.js';
 import { loadPrefs, savePrefs } from '../lib/prefs.js';
-import {
-  loadCredential,
-  saveCredential,
-  clearCredential,
-  loadFailures,
-  isBlank,
-} from '../lib/credentials.js';
-import { isDisabled } from '../lib/autofill-policy.js';
+import { loadCredential, saveCredential, clearCredential, isBlank } from '../lib/credentials.js';
 
 const sitesBox = document.getElementById('sites');
 const credentialsBox = document.getElementById('credentials');
@@ -87,7 +80,7 @@ function renderSites(enabled) {
 /**
  * Builds one site's credential block: a username field, a password field,
  * Save/Clear buttons, and text reporting whether a credential is currently
- * stored and whether autofill is disabled for this site.
+ * stored.
  *
  * The password field is populated ONLY by what the owner types here, never
  * from storage — loadCredential's result feeds the status text, never
@@ -95,7 +88,7 @@ function renderSites(enabled) {
  * it somewhere a page-level bug could reach it, for no benefit: the owner
  * already knows what they typed.
  */
-function buildCredentialRow(adapter, initialStored, initialDisabled) {
+function buildCredentialRow(adapter, initialStored) {
   const wrap = document.createElement('div');
   wrap.className = 'cred-row';
   wrap.dataset.site = adapter.id;
@@ -107,18 +100,10 @@ function buildCredentialRow(adapter, initialStored, initialDisabled) {
   statusEl.className = 'cred-status';
   statusEl.id = `cred-status-${adapter.id}`;
 
-  const disabledEl = document.createElement('p');
-  disabledEl.className = 'cred-disabled-note';
-  disabledEl.id = `cred-disabled-${adapter.id}`;
-  disabledEl.textContent =
-    'Autofill is currently disabled for this site after repeated failed attempts. ' +
-    'Saving a credential again re-enables it.';
-
-  function setState(stored, disabled) {
+  function setState(stored) {
     statusEl.textContent = stored ? 'Stored' : 'Not stored';
-    disabledEl.hidden = !disabled;
   }
-  setState(initialStored, initialDisabled);
+  setState(initialStored);
 
   const usernameLabel = document.createElement('label');
   usernameLabel.className = 'cred-field';
@@ -159,11 +144,8 @@ function buildCredentialRow(adapter, initialStored, initialDisabled) {
     const secret = secretInput.value;
 
     if (isBlank(username) || isBlank(secret)) {
-      // saveCredential always resets the failure count. Writing a blank or
-      // half-blank credential would silently re-enable a site that tripped
-      // the attempt cap without the owner ever entering a real credential —
-      // refuse before anything reaches storage, and leave both the stored
-      // credential and the failure count untouched.
+      // Refuse before anything reaches storage, and leave the stored
+      // credential untouched.
       flash('Both the username/card number and PIN/password are required.');
       return;
     }
@@ -177,9 +159,7 @@ function buildCredentialRow(adapter, initialStored, initialDisabled) {
 
     const stored = await loadCredential(adapter.id);
     if (!isCurrent(ticket)) return;
-    // saveCredential always resets the failure count, so this site can never
-    // read as disabled immediately after a save.
-    setState(stored !== null, false);
+    setState(stored !== null);
     flash(`Saved the ${adapter.label} credential.`);
   });
 
@@ -191,26 +171,19 @@ function buildCredentialRow(adapter, initialStored, initialDisabled) {
     secretInput.value = '';
     if (!isCurrent(ticket)) return;
 
-    const failures = await loadFailures(adapter.id);
-    if (!isCurrent(ticket)) return;
-    // clearCredential does not touch the failure count, so a site that was
-    // disabled stays disabled until the credential is re-saved.
-    setState(false, isDisabled(failures));
+    setState(false);
     flash(`Cleared the ${adapter.label} credential.`);
   });
 
-  wrap.append(heading, statusEl, disabledEl, usernameLabel, secretLabel, actions);
+  wrap.append(heading, statusEl, usernameLabel, secretLabel, actions);
   return wrap;
 }
 
 async function renderCredentials() {
   credentialsBox.replaceChildren();
   for (const adapter of ADAPTERS) {
-    const [credential, failures] = await Promise.all([
-      loadCredential(adapter.id),
-      loadFailures(adapter.id),
-    ]);
-    credentialsBox.append(buildCredentialRow(adapter, credential !== null, isDisabled(failures)));
+    const credential = await loadCredential(adapter.id);
+    credentialsBox.append(buildCredentialRow(adapter, credential !== null));
   }
 }
 

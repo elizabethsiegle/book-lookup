@@ -61,27 +61,39 @@ The content script's side effects are now:
 
 1. `element.focus()` on a username/email field
 2. `chrome.runtime.sendMessage` to the background worker
-3. **writing** a stored credential into a login form, and submitting it — permitted in
-   exactly one file, `src/content/autofill.js`
+3. **writing** a stored credential into a login form — permitted in exactly one file,
+   `src/content/autofill.js`. It fills both fields and stops; it never submits the form.
 
 The invariant test splits accordingly: a `.value` **write** is legal in `autofill.js` alone;
 a `.value` **read** is illegal everywhere, that file included. Every other content-script
 file keeps the original total ban.
 
-### Attempt limiting is a safety requirement, not a preference
+### Automated submission was built, audited three times, defeated six ways, and removed
 
-Library systems lock cards after a small number of failed PIN attempts. An extension that
-re-submits on every page load would exhaust that in seconds and lock the owner out of their
-own account — the feature harming the person it serves.
+An earlier version of this feature filled the login form **and submitted it**, gated by a
+consecutive-failure cap: library systems lock a card after a small number of wrong PIN
+attempts, and an extension that resubmits on every page load could exhaust that in seconds,
+locking the owner out of their own account.
 
-Therefore:
+That cap went through three independent adversarial audits. Each one found real ways to
+defeat it, and each fix round introduced a new hole. Across the three rounds, six distinct
+defeats were found: scoring a CAPTCHA/2FA challenge page as a successful login and resetting
+the counter on it; resetting on a logged-out results page that merely shared a URL path with
+an authenticated one; a non-atomic read-modify-write on the failure counter that let several
+concurrent tabs each receive a credential before any of them incremented it; a manual,
+by-hand sign-in resetting the counter while a stale, still-wrong PIN remained the one stored;
+and a reset triggerable from a cross-origin page. Counting at hand-out time instead of
+confirmation time, gating the reset behind an explicit signed-in signal instead of URL/state
+alone, and locking the counter update closed each hole that had just been found — and opened
+the next one.
 
-- At most **one** submission per page load.
-- After **two consecutive failures** for a site, autofill disables itself for that site and
-  the badge reports it. It stays off until the owner re-saves the credential, which is an
-  explicit acknowledgement that they believe it is correct now.
-- A failure is: we submitted, the page reloaded, and it still classifies as `login`.
-- The consecutive-failure count resets on any successful login.
+The owner decided to stop hardening this and remove automated submission entirely instead.
+**No auto-submit means no runaway attempts, which means the cap — and every hole in it —
+becomes unnecessary rather than merely harder to exploit.** `src/content/autofill.js` now
+fills both fields and stops; the owner presses Enter. This eliminates the risk the cap
+existed to mitigate, rather than mitigating it more thoroughly: there is no consecutive-
+failure count left to defeat, no reset logic left to spoof, and no confirmation channel left
+to race.
 
 ### Anti-spoofing guard
 

@@ -45,7 +45,7 @@ function makeFakeStorageLocal({ initial = {}, setDelays = [], getDelays = [] } =
   // Mirrors real chrome.storage.local.get's three call shapes: a single key
   // string (credentials.js's usage), an array of keys, or an object of
   // key -> default (prefs.js's usage). Getting this shape-faithful matters
-  // once options.js also reads per-site credential/failure keys on init.
+  // once options.js also reads per-site credential keys on init.
   const get = vi.fn((keys) => {
     const delay = getDelays[getCalls] ?? 0;
     getCalls += 1;
@@ -113,7 +113,6 @@ function credentialEls(siteId) {
     save: document.getElementById(`cred-save-${siteId}`),
     clear: document.getElementById(`cred-clear-${siteId}`),
     status: document.getElementById(`cred-status-${siteId}`),
-    disabled: document.getElementById(`cred-disabled-${siteId}`),
   };
 }
 
@@ -198,9 +197,8 @@ describe('options: credentials — initial render', () => {
     await loadOptions();
 
     for (const site of ALL_SITES) {
-      const { status, disabled, username, secret } = credentialEls(site);
+      const { status, username, secret } = credentialEls(site);
       expect(status.textContent).toBe('Not stored');
-      expect(disabled.hidden).toBe(true);
       // Never pre-filled, whether or not a credential exists.
       expect(username.value).toBe('');
       expect(secret.value).toBe('');
@@ -222,26 +220,6 @@ describe('options: credentials — initial render', () => {
     // The whole point: the stored secret is never read back into the DOM.
     expect(secret.value).toBe('');
     expect(username.value).toBe('');
-  });
-
-  it('surfaces the disabled state for a site that tripped the failure cap, and only that site', async () => {
-    const storageLocal = makeFakeStorageLocal({
-      initial: {
-        sites: [...ALL_SITES],
-        'autofillFailures:goodreads': 2,
-      },
-    });
-
-    await loadOptions({ storageLocal });
-
-    const goodreads = credentialEls('goodreads');
-    expect(goodreads.disabled.hidden).toBe(false);
-    expect(goodreads.disabled.textContent).toMatch(/disabled/i);
-    expect(goodreads.disabled.textContent).toMatch(/saving.*again.*re-enables/i);
-
-    for (const site of ['sfpl', 'storygraph']) {
-      expect(credentialEls(site).disabled.hidden).toBe(true);
-    }
   });
 });
 
@@ -267,46 +245,21 @@ describe('options: saving a credential', () => {
     expect(username.value).toBe('');
     expect(secret.value).toBe('');
   });
-
-  it('re-enables a previously disabled site (saveCredential resets the failure count)', async () => {
-    const storageLocal = makeFakeStorageLocal({
-      initial: { sites: [...ALL_SITES], 'autofillFailures:goodreads': 2 },
-    });
-    await loadOptions({ storageLocal });
-
-    const { username, secret, save, disabled } = credentialEls('goodreads');
-    expect(disabled.hidden).toBe(false);
-
-    setInput(username, 'reader99');
-    setInput(secret, 'newpin');
-    save.click();
-    await flushPromises(20);
-
-    expect(disabled.hidden).toBe(true);
-    const setCalls = storageLocal.set.mock.calls.map(([partial]) => partial);
-    expect(setCalls).toContainEqual({ 'autofillFailures:goodreads': 0 });
-  });
 });
 
 describe('options: saving a blank credential', () => {
-  it('refuses when both fields are empty: no write, no failure reset, message flashed', async () => {
-    const storageLocal = makeFakeStorageLocal({
-      initial: { sites: [...ALL_SITES], 'autofillFailures:sfpl': 2 },
-    });
+  it('refuses when both fields are empty: no write, message flashed', async () => {
+    const storageLocal = makeFakeStorageLocal({ initial: { sites: [...ALL_SITES] } });
     const { status } = await loadOptions({ storageLocal });
 
-    const { save, disabled } = credentialEls('sfpl');
-    expect(disabled.hidden).toBe(false);
+    const { save } = credentialEls('sfpl');
 
     save.click();
     await flushPromises(20);
 
     const setCalls = storageLocal.set.mock.calls.map(([partial]) => partial);
     expect(setCalls.some((partial) => 'cred:sfpl' in partial)).toBe(false);
-    expect(setCalls.some((partial) => 'autofillFailures:sfpl' in partial)).toBe(false);
     expect(status.textContent).toMatch(/required/i);
-    // Still disabled — a blank save must not quietly re-enable a locked-out site.
-    expect(disabled.hidden).toBe(false);
   });
 
   it('refuses when only the username is filled in', async () => {
@@ -363,22 +316,5 @@ describe('options: clearing a credential', () => {
     expect(status.textContent).toBe('Not stored');
     expect(username.value).toBe('');
     expect(secret.value).toBe('');
-  });
-
-  it('does not touch the failure count, so a disabled site stays disabled after clearing', async () => {
-    const storageLocal = makeFakeStorageLocal({
-      initial: {
-        sites: [...ALL_SITES],
-        'cred:sfpl': { username: 'card', secret: 'pin' },
-        'autofillFailures:sfpl': 2,
-      },
-    });
-    await loadOptions({ storageLocal });
-
-    const { clear, disabled } = credentialEls('sfpl');
-    clear.click();
-    await flushPromises(20);
-
-    expect(disabled.hidden).toBe(false);
   });
 });

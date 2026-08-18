@@ -1,13 +1,13 @@
 import { adapterForUrl } from '../sites/index.js';
-import { findUsernameField, matchesAny, AUTHED_SELECTORS } from '../lib/detect-helpers.js';
-import { fillAndSubmit } from './autofill.js';
+import { findUsernameField } from '../lib/detect-helpers.js';
+import { fillCredential } from './autofill.js';
 
 /**
  * This module has exactly three side effects available to it:
  *   1. focus() a username field
  *   2. send a message to the background worker
- *   3. write a stored credential into the login form and submit it, via
- *      autofill.js — the one file permitted to write `.value`
+ *   3. write a stored credential into the login form, via autofill.js — the
+ *      one file permitted to write `.value`
  *
  * It never reads a field's contents, never navigates, and never makes a
  * network request. See test/security-invariants.test.js, which fails the
@@ -17,33 +17,23 @@ import { fillAndSubmit } from './autofill.js';
 const RECHECK_DELAY_MS = 1500;
 
 // Content scripts re-run fresh on every navigation, so this resets on its
-// own — it exists only to stop a second submission within the same load
-// (e.g. the 1500ms recheck below firing after an autofill already went out).
-let submittedThisLoad = false;
+// own — it exists only to stop a second fill within the same load (e.g. the
+// 1500ms recheck below firing after a fill already went out), so a re-check
+// does not overwrite a field the owner is now typing into.
+let filledThisLoad = false;
 
 async function report(adapter) {
   const state = adapter.detect(document, location.href);
-  // A URL path alone is not proof of being signed in: SFPL's /v2/search and
-  // Goodreads' /search classify as `state === 'results'` for logged-out
-  // visitors too, and runSearch() opens exactly those URLs as this
-  // extension's core action. `signedIn` is a separate, honest signal — a
-  // real sign-out control actually present in the DOM — so the worker can
-  // tell "this URL happens to be a results page" apart from "this page
-  // proves the credential worked." This is a boolean classification, not
-  // field content: matchesAny() only checks for the presence of selectors,
-  // never reads a field's `.value`.
-  const signedIn = matchesAny(document, AUTHED_SELECTORS);
   const reply = await chrome.runtime.sendMessage({
     type: 'page',
     site: adapter.id,
     state,
-    signedIn,
   });
 
-  if (reply?.autofill && !submittedThisLoad) {
-    const submitted = fillAndSubmit(document, reply.autofill);
-    if (submitted) {
-      submittedThisLoad = true;
+  if (reply?.autofill && !filledThisLoad) {
+    const filled = fillCredential(document, reply.autofill);
+    if (filled) {
+      filledThisLoad = true;
     }
     return state;
   }

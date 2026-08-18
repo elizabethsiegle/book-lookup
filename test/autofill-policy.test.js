@@ -1,10 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import {
-  MAX_CONSECUTIVE_FAILURES,
-  recordOutcome,
-  isDisabled,
-  shouldAutofill,
-} from '../src/lib/autofill-policy.js';
+import { shouldAutofill } from '../src/lib/autofill-policy.js';
 import { getAdapter } from '../src/sites/index.js';
 
 const sfpl = getAdapter('sfpl');
@@ -12,7 +7,6 @@ const goodreads = getAdapter('goodreads');
 
 const baseArgs = () => ({
   hasCredential: true,
-  failures: 0,
   state: 'login',
   url: `https://${sfpl.hostMatch}${sfpl.loginPath}`,
   adapter: sfpl,
@@ -39,13 +33,6 @@ describe('shouldAutofill: every reason branch', () => {
     }
   });
 
-  it('disabled — failures have reached the cap', () => {
-    expect(shouldAutofill({ ...baseArgs(), failures: MAX_CONSECUTIVE_FAILURES })).toEqual({
-      fill: false,
-      reason: 'disabled',
-    });
-  });
-
   it('insecure — scheme is not https:', () => {
     expect(
       shouldAutofill({ ...baseArgs(), url: `http://${sfpl.hostMatch}${sfpl.loginPath}` })
@@ -67,7 +54,7 @@ describe('shouldAutofill: every reason branch', () => {
   it('wrong-path — a subpath of the login path is refused, not admitted', () => {
     // A password-change or registration page living under the login path
     // (e.g. /user/login/change) must not be treated as the login page
-    // itself — only an exact path match may fill and submit the stored PIN.
+    // itself — only an exact path match may fill the stored PIN.
     expect(
       shouldAutofill({ ...baseArgs(), url: `https://${sfpl.hostMatch}${sfpl.loginPath}/change` })
     ).toEqual({ fill: false, reason: 'wrong-path' });
@@ -130,16 +117,6 @@ describe('shouldAutofill: guard ordering', () => {
     ).toEqual({ fill: false, reason: 'insecure' });
   });
 
-  it('a disabled site with no credential reports disabled, not no-credential', () => {
-    expect(
-      shouldAutofill({
-        ...baseArgs(),
-        hasCredential: false,
-        failures: MAX_CONSECUTIVE_FAILURES,
-      })
-    ).toEqual({ fill: false, reason: 'disabled' });
-  });
-
   it('wrong-host on a non-login page reports wrong-host, not not-login', () => {
     expect(
       shouldAutofill({
@@ -148,54 +125,5 @@ describe('shouldAutofill: guard ordering', () => {
         url: `https://not-${sfpl.hostMatch}${sfpl.loginPath}`,
       })
     ).toEqual({ fill: false, reason: 'wrong-host' });
-  });
-});
-
-describe('recordOutcome', () => {
-  it('increments on failure', () => {
-    expect(recordOutcome(0, 'failure')).toEqual({ failures: 1, disabled: false });
-  });
-
-  it('reaches the disabled threshold', () => {
-    expect(recordOutcome(1, 'failure')).toEqual({
-      failures: MAX_CONSECUTIVE_FAILURES,
-      disabled: true,
-    });
-  });
-
-  it('holds at the threshold on further failures rather than reporting anything special', () => {
-    expect(recordOutcome(MAX_CONSECUTIVE_FAILURES, 'failure')).toEqual({
-      failures: MAX_CONSECUTIVE_FAILURES + 1,
-      disabled: true,
-    });
-  });
-
-  it('resets to 0 on success from a fresh count', () => {
-    expect(recordOutcome(0, 'success')).toEqual({ failures: 0, disabled: false });
-  });
-
-  it('resets to 0 on success even after reaching the cap', () => {
-    expect(recordOutcome(MAX_CONSECUTIVE_FAILURES, 'success')).toEqual({
-      failures: 0,
-      disabled: false,
-    });
-  });
-});
-
-describe('isDisabled', () => {
-  it('is false below the cap', () => {
-    expect(isDisabled(MAX_CONSECUTIVE_FAILURES - 1)).toBe(false);
-  });
-
-  it('is true exactly at the cap', () => {
-    expect(isDisabled(MAX_CONSECUTIVE_FAILURES)).toBe(true);
-  });
-
-  it('is true above the cap', () => {
-    expect(isDisabled(MAX_CONSECUTIVE_FAILURES + 1)).toBe(true);
-  });
-
-  it('is false at 0', () => {
-    expect(isDisabled(0)).toBe(false);
   });
 });

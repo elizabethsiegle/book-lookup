@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
-import { fillAndSubmit } from '../src/content/autofill.js';
+import { fillCredential } from '../src/content/autofill.js';
 
 // Paths built with node:path rather than `new URL(..., import.meta.url)` —
 // see test/security-invariants.test.js for why (Vite's import-analysis
@@ -25,22 +25,34 @@ beforeEach(() => {
   document.body.innerHTML = '';
 });
 
-describe('fillAndSubmit', () => {
-  it('fills both fields and submits, returning true', () => {
+describe('fillCredential', () => {
+  it('fills both fields and returns true, without submitting', () => {
     setForm(LOGIN_FORM);
     const form = document.getElementById('login-form');
     let submitted = false;
-    form.addEventListener('submit', (e) => {
-      e.preventDefault();
+    form.addEventListener('submit', () => {
       submitted = true;
     });
+    const button = form.querySelector('[type="submit"]');
+    const clickSpy = vi.fn();
+    button.addEventListener('click', clickSpy);
+    const requestSubmitSpy = vi.spyOn(form, 'requestSubmit');
+    const submitMethodSpy = vi.spyOn(form, 'submit').mockImplementation(() => {});
 
-    const result = fillAndSubmit(document, { username: 'card123', secret: '4321' });
+    const result = fillCredential(document, { username: 'card123', secret: '4321' });
 
     expect(result).toBe(true);
-    expect(submitted).toBe(true);
     expect(document.getElementById('username').value).toBe('card123');
     expect(document.getElementById('password').value).toBe('4321');
+
+    // No submission of any kind: no submit event, no click on the submit
+    // control, no requestSubmit()/submit() call. "We removed the call" is
+    // not evidence on its own — these are the observable effects a
+    // submission would have had.
+    expect(submitted).toBe(false);
+    expect(clickSpy).not.toHaveBeenCalled();
+    expect(requestSubmitSpy).not.toHaveBeenCalled();
+    expect(submitMethodSpy).not.toHaveBeenCalled();
   });
 
   it('returns false and writes nothing when there is no password field', () => {
@@ -51,7 +63,7 @@ describe('fillAndSubmit', () => {
       </form>
     `);
 
-    const result = fillAndSubmit(document, { username: 'card123', secret: '4321' });
+    const result = fillCredential(document, { username: 'card123', secret: '4321' });
 
     expect(result).toBe(false);
     expect(document.getElementById('username').value).toBe('');
@@ -65,7 +77,7 @@ describe('fillAndSubmit', () => {
       </form>
     `);
 
-    const result = fillAndSubmit(document, { username: 'card123', secret: '4321' });
+    const result = fillCredential(document, { username: 'card123', secret: '4321' });
 
     expect(result).toBe(false);
     expect(document.getElementById('password').value).toBe('');
@@ -73,9 +85,6 @@ describe('fillAndSubmit', () => {
 
   it('dispatches input and change events on both fields', () => {
     setForm(LOGIN_FORM);
-    const form = document.getElementById('login-form');
-    form.addEventListener('submit', (e) => e.preventDefault());
-
     const username = document.getElementById('username');
     const password = document.getElementById('password');
     const usernameEvents = [];
@@ -85,54 +94,39 @@ describe('fillAndSubmit', () => {
     password.addEventListener('input', () => passwordEvents.push('input'));
     password.addEventListener('change', () => passwordEvents.push('change'));
 
-    fillAndSubmit(document, { username: 'card123', secret: '4321' });
+    fillCredential(document, { username: 'card123', secret: '4321' });
 
     expect(usernameEvents).toEqual(['input', 'change']);
     expect(passwordEvents).toEqual(['input', 'change']);
   });
 
-  it('prefers clicking the submit control over form.requestSubmit()', () => {
-    setForm(LOGIN_FORM);
-    const form = document.getElementById('login-form');
-    form.addEventListener('submit', (e) => e.preventDefault());
-    const button = form.querySelector('[type="submit"]');
-    const clickSpy = vi.fn();
-    button.addEventListener('click', clickSpy);
-    const requestSubmitSpy = vi.spyOn(form, 'requestSubmit');
-
-    const result = fillAndSubmit(document, { username: 'card123', secret: '4321' });
-
-    expect(result).toBe(true);
-    expect(clickSpy).toHaveBeenCalledTimes(1);
-    expect(requestSubmitSpy).not.toHaveBeenCalled();
-  });
-
-  it('falls back to form.requestSubmit() when there is no submit control', () => {
-    setForm(`
-      <form id="f">
-        <input type="text" id="username" />
-        <input type="password" id="password" />
-      </form>
-    `);
-    const form = document.getElementById('f');
-    form.addEventListener('submit', (e) => e.preventDefault());
-    const requestSubmitSpy = vi.spyOn(form, 'requestSubmit');
-
-    const result = fillAndSubmit(document, { username: 'card123', secret: '4321' });
-
-    expect(result).toBe(true);
-    expect(requestSubmitSpy).toHaveBeenCalledTimes(1);
-  });
-
-  it('returns false when the fields are not inside a form at all', () => {
+  it('returns false when the fields are direct children of <body> with no form', () => {
+    // detect-helpers.js's username-scope walk deliberately stops short of
+    // <body> (see loginScopeFor) — this is existing, unrelated behavior;
+    // fillCredential just reports whatever findUsernameField finds.
     setForm(`
       <input type="text" id="username" />
       <input type="password" id="password" />
     `);
 
-    const result = fillAndSubmit(document, { username: 'card123', secret: '4321' });
+    const result = fillCredential(document, { username: 'card123', secret: '4321' });
 
     expect(result).toBe(false);
+  });
+
+  it('fills fields that share a non-<body> wrapper with no <form>', () => {
+    setForm(`
+      <div id="widget">
+        <input type="text" id="username" />
+        <input type="password" id="password" />
+      </div>
+    `);
+
+    const result = fillCredential(document, { username: 'card123', secret: '4321' });
+
+    expect(result).toBe(true);
+    expect(document.getElementById('username').value).toBe('card123');
+    expect(document.getElementById('password').value).toBe('4321');
   });
 });
 
