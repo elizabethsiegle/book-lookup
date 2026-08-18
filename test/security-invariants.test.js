@@ -130,8 +130,22 @@ describe('the content script never reads a field value', () => {
   it.each(IN_PAGE_FILES)('%s contains no .value access', (file) => {
     expect(code(file)).not.toMatch(/\.value\b/);
   });
+});
 
-  it.each(IN_PAGE_FILES)('%s reads no form data in bulk', (file) => {
+/**
+ * The bulk-read and exfiltration bans below run over IN_PAGE_FILES *and*
+ * WRITE_ALLOWED (i.e. src/content/autofill.js). Until the 2026-08-18 review
+ * (Finding 2), autofill.js was checked only by the `.value`-read rule and
+ * the manifest-tracking rule below — it was exempt from every other ban,
+ * even though it is the one file holding the credential in memory and the
+ * least audited as a result. Injecting `fetch('/x')`, `console.log(secret)`,
+ * or `new FormData(form)` into autofill.js used to leave this suite fully
+ * green. `FILES_INCLUDING_AUTOFILL` closes that gap.
+ */
+const FILES_INCLUDING_AUTOFILL = [...IN_PAGE_FILES, ...WRITE_ALLOWED];
+
+describe('no content-script file reads form data in bulk', () => {
+  it.each(FILES_INCLUDING_AUTOFILL)('%s reads no form data in bulk', (file) => {
     expect(code(file)).not.toMatch(/\bFormData\b/);
     expect(code(file)).not.toMatch(/\.elements\b/);
   });
@@ -146,10 +160,27 @@ describe('the content script never navigates', () => {
     expect(text).not.toMatch(/window\.open/);
     expect(text).not.toMatch(/\bsubmit\(\)/);
   });
+
+  it.each(WRITE_ALLOWED)(
+    '%s performs no navigation other than the form submission it exists to make',
+    (file) => {
+      // autofill.js legitimately calls form.requestSubmit()/form.submit() —
+      // that IS the feature, and it does navigate the page as a result. The
+      // `submit()` pattern is therefore excluded here (and only here); every
+      // other navigation primitive stays banned even in this file — there is
+      // no legitimate reason for the one file allowed to submit a form to
+      // also redirect the page some other way.
+      const text = code(file);
+      expect(text).not.toMatch(/location\.assign/);
+      expect(text).not.toMatch(/location\.replace/);
+      expect(text).not.toMatch(/location\.href\s*=/);
+      expect(text).not.toMatch(/window\.open/);
+    }
+  );
 });
 
 describe('the content script never exfiltrates', () => {
-  it.each(IN_PAGE_FILES)('%s makes no network calls and logs nothing', (file) => {
+  it.each(FILES_INCLUDING_AUTOFILL)('%s makes no network calls and logs nothing', (file) => {
     const text = code(file);
     expect(text).not.toMatch(/\bfetch\(/);
     expect(text).not.toMatch(/XMLHttpRequest/);
@@ -210,6 +241,54 @@ describe('src/content/autofill.js may write .value but never read it', () => {
       const sample = normalizeSpacing('foo(x.value);');
       expect(sample).toMatch(VALUE_READ);
     });
+  });
+});
+
+describe('the newly-extended bans actually fire on autofill.js, not just on samples', () => {
+  // Positive controls tied to the REAL file content, not a generic string —
+  // proving the bulk-read, exfiltration, and navigation checks above would
+  // genuinely catch a regression in src/content/autofill.js itself, the file
+  // Finding 2 found exempt from all three.
+  function withInjection(snippet) {
+    return code('src/content/autofill.js') + snippet;
+  }
+
+  it('an injected fetch call would fail the exfiltration ban', () => {
+    expect(withInjection('fetch("/x");')).toMatch(/\bfetch\(/);
+  });
+
+  it('an injected console.log would fail the exfiltration ban', () => {
+    expect(withInjection('console.log(secret);')).toMatch(/\bconsole\.(log|info|warn|debug)\(/);
+  });
+
+  it('an injected XMLHttpRequest would fail the exfiltration ban', () => {
+    expect(withInjection('new XMLHttpRequest();')).toMatch(/XMLHttpRequest/);
+  });
+
+  it('an injected FormData read would fail the bulk-read ban', () => {
+    expect(withInjection('new FormData(form);')).toMatch(/\bFormData\b/);
+  });
+
+  it('an injected .elements read would fail the bulk-read ban', () => {
+    expect(withInjection('form.elements;')).toMatch(/\.elements\b/);
+  });
+
+  it('an injected location.assign would fail the navigation ban', () => {
+    expect(withInjection('location.assign("/y");')).toMatch(/location\.assign/);
+  });
+
+  it('an injected window.open would fail the navigation ban', () => {
+    expect(withInjection('window.open("/y");')).toMatch(/window\.open/);
+  });
+
+  it('the real form.requestSubmit()/form.submit() calls do not themselves trip the navigation ban', () => {
+    // Sanity check that excluding the `submit()` pattern for WRITE_ALLOWED is
+    // actually load-bearing: the unmodified file really does contain calls
+    // that shape, and the ban above passes it only because that one pattern
+    // is deliberately excluded for this file and no other.
+    const realCode = code('src/content/autofill.js');
+    expect(realCode).toMatch(/\brequestSubmit\(\)/);
+    expect(realCode).toMatch(/\bsubmit\(\)/);
   });
 });
 
