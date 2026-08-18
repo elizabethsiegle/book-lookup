@@ -33,6 +33,7 @@
     {
       "resources": [
         "src/content/runner.js",
+        "src/content/autofill.js",
         "src/sites/index.js",
         "src/sites/sfpl.js",
         "src/sites/goodreads.js",
