@@ -288,6 +288,59 @@ describe('options: saving a credential', () => {
   });
 });
 
+describe('options: saving a blank credential', () => {
+  it('refuses when both fields are empty: no write, no failure reset, message flashed', async () => {
+    const storageLocal = makeFakeStorageLocal({
+      initial: { sites: [...ALL_SITES], 'autofillFailures:sfpl': 2 },
+    });
+    const { status } = await loadOptions({ storageLocal });
+
+    const { save, disabled } = credentialEls('sfpl');
+    expect(disabled.hidden).toBe(false);
+
+    save.click();
+    await flushPromises(20);
+
+    const setCalls = storageLocal.set.mock.calls.map(([partial]) => partial);
+    expect(setCalls.some((partial) => 'cred:sfpl' in partial)).toBe(false);
+    expect(setCalls.some((partial) => 'autofillFailures:sfpl' in partial)).toBe(false);
+    expect(status.textContent).toMatch(/required/i);
+    // Still disabled — a blank save must not quietly re-enable a locked-out site.
+    expect(disabled.hidden).toBe(false);
+  });
+
+  it('refuses when only the username is filled in', async () => {
+    const storageLocal = makeFakeStorageLocal({ initial: { sites: [...ALL_SITES] } });
+    const { status } = await loadOptions({ storageLocal });
+
+    const { username, secret, save } = credentialEls('goodreads');
+    setInput(username, 'reader99');
+    save.click();
+    await flushPromises(20);
+
+    const setCalls = storageLocal.set.mock.calls.map(([partial]) => partial);
+    expect(setCalls.some((partial) => 'cred:goodreads' in partial)).toBe(false);
+    expect(status.textContent).toMatch(/required/i);
+    // The typed username is left as-is — this is a refusal, not a clear.
+    expect(username.value).toBe('reader99');
+    expect(secret.value).toBe('');
+  });
+
+  it('refuses when only the secret is filled in', async () => {
+    const storageLocal = makeFakeStorageLocal({ initial: { sites: [...ALL_SITES] } });
+    const { status } = await loadOptions({ storageLocal });
+
+    const { secret, save } = credentialEls('storygraph');
+    setInput(secret, 'pin-only');
+    save.click();
+    await flushPromises(20);
+
+    const setCalls = storageLocal.set.mock.calls.map(([partial]) => partial);
+    expect(setCalls.some((partial) => 'cred:storygraph' in partial)).toBe(false);
+    expect(status.textContent).toMatch(/required/i);
+  });
+});
+
 describe('options: clearing a credential', () => {
   it('removes the stored credential, clears the fields, and reports "Not stored"', async () => {
     const storageLocal = makeFakeStorageLocal({

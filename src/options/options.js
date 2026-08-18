@@ -1,6 +1,12 @@
 import { ADAPTERS } from '../sites/index.js';
 import { loadPrefs, savePrefs } from '../lib/prefs.js';
-import { loadCredential, saveCredential, clearCredential, loadFailures } from '../lib/credentials.js';
+import {
+  loadCredential,
+  saveCredential,
+  clearCredential,
+  loadFailures,
+  isBlank,
+} from '../lib/credentials.js';
 import { isDisabled } from '../lib/autofill-policy.js';
 
 const sitesBox = document.getElementById('sites');
@@ -151,6 +157,16 @@ function buildCredentialRow(adapter, initialStored, initialDisabled) {
     const ticket = takeTicket();
     const username = usernameInput.value;
     const secret = secretInput.value;
+
+    if (isBlank(username) || isBlank(secret)) {
+      // saveCredential always resets the failure count. Writing a blank or
+      // half-blank credential would silently re-enable a site that tripped
+      // the attempt cap without the owner ever entering a real credential —
+      // refuse before anything reaches storage, and leave both the stored
+      // credential and the failure count untouched.
+      flash('Both the username/card number and PIN/password are required.');
+      return;
+    }
 
     await saveCredential(adapter.id, { username, secret });
     // Wipe what was just typed rather than leaving the plaintext PIN sitting

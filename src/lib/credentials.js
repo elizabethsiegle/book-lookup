@@ -22,7 +22,11 @@ function failuresKey(siteId) {
   return `autofillFailures:${siteId}`;
 }
 
-function isBlank(value) {
+/** True for anything that is not a non-whitespace string. Exported so callers
+ * (e.g. the options page) can refuse a blank save before it ever reaches
+ * storage, using the exact same rule `loadCredential` uses to treat a
+ * half-filled credential as absent. */
+export function isBlank(value) {
   return typeof value !== 'string' || value.trim() === '';
 }
 
