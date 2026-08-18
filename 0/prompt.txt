@@ -1,0 +1,72 @@
+this is a larger-scale project. you can use superpowers.
+
+Overview
+
+Build a Chrome extension (Manifest V3) called Book Lookup that lets me type a book title or author into a single textbox and, with one click, jumps me straight to that book/author on three sites I use for reading: SF Public Library (SFPL), Goodreads, and The StoryGraph. It should get me to a logged-in results page on each site as fast as possible, ready to place a hold, add to a shelf/list, or read reviews — instead of me manually opening three tabs and logging into each one.
+
+The extension itself must never store, see, or handle my actual passwords. Login is handled entirely by Chrome's own built-in password manager (the one already used for normal browsing) — the extension only navigates to the right page and, where useful, focuses the right field so Chrome's saved-password autofill can do its thing. See "Login approach" below for exactly how this works and its limits.
+
+Important context for the AI building this
+Goodreads has no public API anymore. Goodreads retired API access for developers in December 2020 and disabled existing keys — do not build against the Goodreads API. Instead, drive the actual goodreads.com website (search page + logged-in session).
+The StoryGraph has never had a public API. Same approach: drive the actual app.thestorygraph.com website.
+SFPL's catalog runs on BiblioCommons (sfpl.bibliocommons.com), a shared platform many library systems use — the search URL pattern should follow BiblioCommons' actual markup.
+Because this drives three real websites via content scripts (not APIs), it is inherently fragile: any of these sites can change their HTML and break the extension, may show CAPTCHAs or 2FA that automation can't get past, and site-driving automation could brush up against a site's Terms of Service. Build it defensively (see "Error handling" below) and treat it as a personal tool, not something to distribute.
+Login approach: Chrome's password manager, not the extension
+
+This is a deliberate security choice — do not build a credentials form or any credential storage into this extension.
+
+I will save my SFPL, Goodreads, and StoryGraph passwords in Chrome's own password manager myself (Settings → Passwords), the same way I save any other site's password. That data is already encrypted and tied to my OS/Google account — the extension has no business duplicating it.
+The extension's job is only to navigate to the right page. When a login form loads on a site where I have a saved Chrome password, Chrome will typically autofill the username automatically and show a one-click autofill suggestion for the password field.
+Important technical limit to design around: Chrome deliberately blocks content scripts from programmatically filling or submitting password fields without a genuine user click — this is an anti-phishing protection, not a bug to work around. So "fully automatic, zero-click login" is not realistically achievable here. The realistic best case is: the extension opens the login/search page and, if a login form is present, focuses the username field so Chrome's autofill dropdown is right there for me to click and hit enter — a couple of clicks instead of typing a username and password from scratch.
+If I'm already logged in (session cookie still valid), the extension should detect that and skip straight to showing the search results — no login step at all.
+Core user flow
+Click the extension icon → popup opens with a single textbox and a dropdown/radio for "Title" vs "Author" (default: title).
+Type a query, e.g. Tomorrow, and Tomorrow, and Tomorrow or Gabrielle Zevin.
+Three buttons (or one "Search All" plus three individual icons): SFPL, Goodreads, StoryGraph.
+Clicking a button opens a new tab and navigates straight to that site's search results for the query.
+If that tab isn't authenticated, the site's own login page/modal loads and — per "Login approach" above — the extension focuses the relevant field so Chrome's autofill suggestion appears for a one-click login, then continues to the search results.
+From there I do the rest manually (place a hold, click "Want to Read," add to a specific StoryGraph list, read reviews) — the extension's job is just to get me to a results page fast, not to fully automate shelving actions.
+Stretch goal (nice-to-have, build after the core flow works)
+
+On the Goodreads and StoryGraph results/book pages, optionally auto-click "Add to shelf" → a specific named shelf/list I configure in options (e.g. "To Read" or a custom shelf name), so one click in the popup takes me from typing a title to it being added to my list. Make this an explicit opt-in toggle per site in settings, off by default, since auto-clicking add-to-shelf buttons is more likely to break silently when a site's DOM changes.
+
+Architecture
+Manifest V3, with:
+popup.html / popup.js — the search textbox + buttons
+options.html / options.js — settings page for preferences only (no credentials — see below)
+background.js (service worker) — receives search requests, opens tabs, coordinates with content scripts
+Content scripts scoped to each site's domain (sfpl.bibliocommons.com, www.goodreads.com, app.thestorygraph.com) — these detect whether a login form is present and, if so, focus the username field to surface Chrome's autofill suggestion. They never read, store, or fill in a password themselves.
+Storage: chrome.storage.local is used only for non-sensitive preferences (e.g. default search mode, stretch-goal shelf names, per-site auto-click toggles) — never for credentials, since none are ever collected.
+Permissions: request only what's needed — storage, tabs, and host_permissions scoped to the three specific domains (not <all_urls>). No permission is needed for passwords since the extension never touches them.
+Settings / options page
+
+No username/password fields at all. Instead:
+
+A one-time note explaining the login approach: "Book Lookup never sees or stores your passwords. Save your SFPL, Goodreads, and StoryGraph logins in Chrome's own password manager (Settings → Passwords) and this extension will help Chrome's autofill find them faster."
+A link/button that opens chrome://settings/passwords for convenience.
+(Stretch goal only) a text field per site for the target shelf/list name to auto-add to, plus the opt-in toggle for auto-clicking "Add to shelf."
+Per-site behavior
+SF Public Library (BiblioCommons)
+Search URL pattern: https://sfpl.bibliocommons.com/v2/search?query=<encoded query>&searchType=<title|author>
+If a sign-in form/modal appears (typically at /user/login), focus the username field so Chrome's autofill can offer my saved SFPL library-card login.
+Land on the search results page so I can see availability and place a hold myself.
+Goodreads
+Search URL pattern: https://www.goodreads.com/search?q=<encoded query>
+If Goodreads' sign-in form appears, focus the email field so Chrome's autofill can offer my saved Goodreads login.
+Land on the search results page (or the book's page if it's an exact single match) so I can see ratings/reviews and click "Want to Read" myself.
+The StoryGraph
+Search URL pattern: https://app.thestorygraph.com/browse?search_term=<encoded query>
+If StoryGraph's sign-in form appears, focus the email field so Chrome's autofill can offer my saved StoryGraph login.
+Land on the search results page so I can see stats/reviews and add it to a list myself.
+Error handling (build this in from the start, not as an afterthought)
+If no saved Chrome password exists for a site yet, the focused field will simply have no autofill suggestion — that's expected; let the normal login page sit there for me to log in manually (and ideally save the password in Chrome while I'm at it).
+If a login form isn't found where expected (site redesign, already logged in, CAPTCHA shown, 2FA prompt shown), don't loop or retry — just stop and let the real page load so I can log in manually. Show a small badge/notification on the extension icon like "Manual login needed" rather than failing silently.
+Never log, transmit, or persist anything read from a password field, autofill event, or login response — the extension's content scripts should only ever focus fields, never read their values.
+Non-goals (explicitly out of scope for v1)
+No credential storage or handling of any kind, by design — this is a deliberate security boundary, not a missing feature.
+No support for other library systems besides SFPL/BiblioCommons.
+No attempt to reverse-engineer a private/undocumented Goodreads or StoryGraph API — this stays a browser-automation tool.
+No handling of 2FA/CAPTCHA challenges — fall back to manual login when one appears.
+Suggested tech
+
+Plain HTML/CSS/JS (or TypeScript if the tool defaults to it) is enough — no framework needed for a popup this small. Keep the content scripts minimal and defensive (feature-detect the login form before touching it, and only ever focus fields — never read or fill password values).
