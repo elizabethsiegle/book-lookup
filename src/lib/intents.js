@@ -15,7 +15,15 @@ export function createIntent({ tabId, site, targetUrl, now }) {
   };
 }
 
-function liveIntent(intent, now) {
+/**
+ * Exported so callers that need to know "was there a live intent right now"
+ * — without going through a full `decide()` call, which for `results` also
+ * clears it — can ask the same liveness question `decide` asks internally.
+ * background.js's outbound sign-in redirect is the first such caller: it
+ * must capture whether the tab had a live intent *before* `decide()` runs,
+ * because `decide` deletes the intent on `results` as soon as it runs.
+ */
+export function liveIntent(intent, now) {
   if (!intent) return null;
   return now < intent.expiresAt ? intent : null;
 }

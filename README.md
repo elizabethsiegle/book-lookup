@@ -37,6 +37,17 @@ user actually typed. That asymmetry (write allowed in exactly one file, read
 banned in all of them) is the property that makes opting in defensible, and
 `test/security-invariants.test.js` enforces both halves of it.
 
+**A tab this extension opened can be sent to the login page on your behalf.**
+SFPL (and Goodreads' search) serve results to logged-out visitors, so a tab
+this extension opened can land on search results while you're signed out —
+the login page never appears, so a saved credential never gets a chance to
+autofill. When that happens on a tab this extension itself opened, and a
+credential is saved for that site, the extension sends that tab to the real
+login page, lets autofill fill it, and returns it to the same search results
+once you sign in. This never touches a tab you opened yourself by ordinary
+browsing, and never fires at all for a site with no saved credential; at
+most one such redirect happens per tab every ten minutes.
+
 **Autofill fills the login form; it never submits it — you press Enter.** An
 earlier version filled and submitted automatically, guarded by a cap that
 disabled autofill for a site after two consecutive failures, because a wrong
@@ -90,10 +101,13 @@ npm test
 Tested: URL construction for all three sites, page classification against saved
 HTML, the pending-intent state machine, and the security invariants above.
 
-**`src/background.js` has no automated tests.** Search dispatch, intent
-persistence, the autofill hand-out decision, badge calls, and tab
-creation/update are exercised only by the manual smoke test described below —
-there is no unit or integration coverage of them.
+**`src/background.js` is otherwise mostly untested.** `test/background.test.js`
+covers the outbound sign-in redirect (results-while-logged-out → login →
+resume, and the once-per-ten-minutes guard) against the real module and a
+stubbed `chrome` global. Search dispatch, plain intent persistence, the
+autofill hand-out decision outside that flow, badge calls, and tab
+creation/update are still exercised only by the manual smoke test described
+below — there is no unit or integration coverage of them.
 
 **Known gap: `authed` detection is unverified against a real page.** The
 signed-in fixtures in `test/fixtures/` (`sfpl-authed-dashboard.html`,

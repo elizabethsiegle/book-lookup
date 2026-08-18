@@ -1,5 +1,5 @@
 import { ADAPTERS, getAdapter } from './sites/index.js';
-import { createIntent, decide } from './lib/intents.js';
+import { createIntent, decide, liveIntent, INTENT_TTL_MS } from './lib/intents.js';
 import { BADGE } from './lib/badges.js';
 import { normalizeQuery, normalizeMode } from './lib/query.js';
 import { loadCredential } from './lib/credentials.js';
@@ -20,6 +20,39 @@ async function writeIntent(tabId, intent) {
   } else {
     await chrome.storage.session.remove(key);
   }
+}
+
+/**
+ * The anti-ping-pong guard for the outbound sign-in redirect below.
+ *
+ * Without it, results → login → back to results → login → ... loops
+ * forever: the owner lands back on results still logged out (autofill only
+ * fills, it never submits), which would otherwise look identical to the
+ * very first landing and trigger a second redirect immediately. One marker
+ * per tab, holding the site it was recorded for and a 10-minute expiry,
+ * caps the redirect at once per tab per site per TTL window.
+ */
+const signinAttemptKey = (tabId) => `signinAttempt:${tabId}`;
+
+async function readSigninAttempt(tabId) {
+  const key = signinAttemptKey(tabId);
+  const stored = await chrome.storage.session.get(key);
+  return stored[key] || null;
+}
+
+async function writeSigninAttempt(tabId, attempt) {
+  const key = signinAttemptKey(tabId);
+  if (attempt) {
+    await chrome.storage.session.set({ [key]: attempt });
+  } else {
+    await chrome.storage.session.remove(key);
+  }
+}
+
+/** An attempt for a different site, or one past its expiry, counts as absent. */
+function liveSigninAttempt(attempt, site, now) {
+  if (!attempt || attempt.site !== site) return null;
+  return now < attempt.expiresAt ? attempt : null;
 }
 
 async function setBadge(tabId, badgeName) {
@@ -83,16 +116,45 @@ async function runSearch({ query, mode, sites }) {
  * risk rather than mitigating it. See
  * docs/superpowers/specs/2026-08-12-book-lookup-extension-design.md,
  * "Credential handling", for the history.
+ *
+ * OUTBOUND SIGN-IN REDIRECT: SFPL (and Goodreads' /search) serve search
+ * results to logged-out visitors, so a tab this extension opened can land
+ * on `results` while signed out — the login page never appears, so the
+ * stored-credential autofill never gets a chance to fire. When that happens
+ * on a tab this extension itself opened (proven by a *live* intent existing
+ * for the tab before `decide()` runs — `decide` clears the intent on
+ * `results`, so it must be captured first) and a credential is on file, the
+ * worker sends the tab to the site's real login page instead, recording a
+ * fresh intent whose `targetUrl` is the current results page (from
+ * `sender.url`, never the message body) so the existing `login` → `authed` →
+ * resume machinery in decide() carries the tab back once the owner signs in.
+ * A per-tab `signinAttempt` marker caps this at one redirect per tab per
+ * site per INTENT_TTL_MS window, so a still-logged-out landing after the
+ * redirect can never bounce the tab again immediately.
+ *
+ * This never touches a tab the extension did not open: ordinary browsing to
+ * a `results` URL has no intent recorded for its tab at all, so the
+ * live-intent check refuses it before the credential check is even reached.
  */
-async function handlePageReport({ site, state }, tabId, url) {
+async function handlePageReport({ site, state, signedIn }, tabId, url) {
   const adapter = getAdapter(site);
   if (!adapter) return { focus: false };
 
-  const intent = await readIntent(tabId);
-  const decision = decide(intent, { state, now: Date.now() });
+  const now = Date.now();
+  const priorIntent = await readIntent(tabId);
+  const hadLiveIntent = Boolean(liveIntent(priorIntent, now));
+
+  const decision = decide(priorIntent, { state, now });
 
   await writeIntent(tabId, decision.intent);
   await setBadge(tabId, decision.badge);
+
+  // The sign-in worked: whatever redirect guard was armed for this tab no
+  // longer needs to be. Strict `=== true` — a missing/undefined signal must
+  // never be treated as proof of anything.
+  if (signedIn === true) {
+    await writeSigninAttempt(tabId, null);
+  }
 
   if (decision.action === 'resume' && decision.targetUrl) {
     await chrome.tabs.update(tabId, { url: decision.targetUrl });
@@ -100,6 +162,17 @@ async function handlePageReport({ site, state }, tabId, url) {
   }
 
   const credential = await loadCredential(site);
+
+  if (state === 'results' && signedIn === false && hadLiveIntent && credential) {
+    const priorAttempt = await readSigninAttempt(tabId);
+    if (!liveSigninAttempt(priorAttempt, site, now)) {
+      await writeSigninAttempt(tabId, { site, expiresAt: now + INTENT_TTL_MS });
+      await writeIntent(tabId, createIntent({ tabId, site, targetUrl: url, now }));
+      await chrome.tabs.update(tabId, { url: `https://${adapter.hostMatch}${adapter.loginPath}` });
+      return { focus: false };
+    }
+  }
+
   const autofillDecision = shouldAutofill({
     hasCredential: Boolean(credential),
     state,
@@ -137,9 +210,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-// Abandon an intent when its tab closes.
+// Abandon an intent, and any pending sign-in-redirect guard, when its tab closes.
 chrome.tabs.onRemoved.addListener((tabId) => {
   writeIntent(tabId, null);
+  writeSigninAttempt(tabId, null);
 });
 
 // There is deliberately no chrome.tabs.onUpdated listener here. Without the
