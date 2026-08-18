@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { getAdapter } from '../src/sites/index.js';
-import { createIntent, INTENT_TTL_MS } from '../src/lib/intents.js';
+import { createIntent } from '../src/lib/intents.js';
 
 /**
  * Exercises the REAL, unmodified src/background.js — including the real
@@ -21,8 +21,13 @@ import { createIntent, INTENT_TTL_MS } from '../src/lib/intents.js';
  */
 
 const sfpl = getAdapter('sfpl');
+const goodreads = getAdapter('goodreads');
+const storygraph = getAdapter('storygraph');
 const LOGIN_URL = `https://${sfpl.hostMatch}${sfpl.loginPath}`;
 const RESULTS_URL = `https://${sfpl.hostMatch}/v2/search?query=Dune&searchType=keyword`;
+const GOODREADS_RESULTS_URL = `https://${goodreads.hostMatch}/search?q=Dune`;
+const GOODREADS_LOGIN_URL = `https://${goodreads.hostMatch}${goodreads.loginPath}`;
+const STORYGRAPH_RESULTS_URL = `https://${storygraph.hostMatch}/browse?search_term=Dune`;
 const NOW = 1_700_000_000_000;
 
 function makeFakeArea(initial = {}) {
@@ -103,8 +108,8 @@ async function loadBackground({ localInitial = {}, sessionInitial = {} } = {}) {
   };
 }
 
-function pageReport(state, signedIn) {
-  const message = { type: 'page', site: 'sfpl', state };
+function pageReport(state, signedIn, site = 'sfpl') {
+  const message = { type: 'page', site, state };
   if (signedIn !== undefined) message.signedIn = signedIn;
   return message;
 }
@@ -113,8 +118,8 @@ function sender(tabId, url) {
   return { tab: { id: tabId }, url };
 }
 
-function seededIntent(tabId, targetUrl = RESULTS_URL, now = NOW) {
-  return createIntent({ tabId, site: 'sfpl', targetUrl, now });
+function seededIntent(tabId, targetUrl = RESULTS_URL, now = NOW, site = 'sfpl') {
+  return createIntent({ tabId, site, targetUrl, now });
 }
 
 const CREDENTIAL = { username: 'card-1', secret: '1234' };
@@ -142,10 +147,10 @@ describe('outbound sign-in redirect', () => {
     expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
     expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: LOGIN_URL });
 
-    expect(session._dump()['signinAttempt:1']).toEqual({
-      site: 'sfpl',
-      expiresAt: NOW + INTENT_TTL_MS,
-    });
+    // Finding 1: the marker is a bare one-shot-forever flag now — no site,
+    // no expiry, nothing that could ever let it be waited out or cleared
+    // by anything other than the tab closing.
+    expect(session._dump()['signinAttempt:1']).toBe(true);
 
     const newIntent = session._dump()['intent:1'];
     expect(newIntent.targetUrl).toBe(RESULTS_URL);
@@ -168,19 +173,23 @@ describe('outbound sign-in redirect', () => {
     expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: LOGIN_URL });
   });
 
-  it('does not redirect when signedIn is true, and clears any existing marker', async () => {
+  it('Finding 1: signedIn:true does NOT clear an existing marker (it is one-shot forever)', async () => {
     const { sendMessage, chrome, session } = await loadBackground({
       localInitial: { 'cred:sfpl': CREDENTIAL },
       sessionInitial: {
         'intent:1': seededIntent(1),
-        'signinAttempt:1': { site: 'sfpl', expiresAt: NOW + INTENT_TTL_MS },
+        'signinAttempt:1': true,
       },
     });
 
     await sendMessage(pageReport('results', true), sender(1, RESULTS_URL));
 
     expect(chrome.tabs.update).not.toHaveBeenCalled();
-    expect(session._dump()['signinAttempt:1']).toBeUndefined();
+    // The old behavior cleared the marker here, on the exact report that
+    // immediately precedes a resume — which is what let a genuinely
+    // signed-in owner get bounced back to the login page again. The marker
+    // must survive every report except the tab actually closing.
+    expect(session._dump()['signinAttempt:1']).toBe(true);
   });
 
   it('does not redirect when signedIn is false but no credential is stored', async () => {
@@ -215,26 +224,28 @@ describe('outbound sign-in redirect', () => {
     expect(chrome.tabs.update).not.toHaveBeenCalled();
   });
 
-  it('an expired marker is treated as absent and allows a further redirect', async () => {
+  it('Finding 1: the marker never expires — a marker set long ago still blocks a further redirect', async () => {
     const { sendMessage, chrome } = await loadBackground({
       localInitial: { 'cred:sfpl': CREDENTIAL },
       sessionInitial: {
         'intent:1': seededIntent(1),
-        'signinAttempt:1': { site: 'sfpl', expiresAt: NOW - 1 },
+        // Old design would have called this expired (`expiresAt: NOW - 1`)
+        // and let a further redirect through. There is no expiresAt at all
+        // now — presence alone means "never again".
+        'signinAttempt:1': true,
       },
     });
 
     await sendMessage(pageReport('results', false), sender(1, RESULTS_URL));
 
-    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
-    expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: LOGIN_URL });
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
   });
 
   it('a marker on one tab does not block a redirect on a different tab', async () => {
     const { sendMessage, chrome } = await loadBackground({
       localInitial: { 'cred:sfpl': CREDENTIAL },
       sessionInitial: {
-        'signinAttempt:1': { site: 'sfpl', expiresAt: NOW + INTENT_TTL_MS },
+        'signinAttempt:1': true,
         'intent:2': seededIntent(2),
       },
     });
@@ -249,7 +260,7 @@ describe('outbound sign-in redirect', () => {
     const { session, removeTab } = await loadBackground({
       sessionInitial: {
         'intent:1': seededIntent(1),
-        'signinAttempt:1': { site: 'sfpl', expiresAt: NOW + INTENT_TTL_MS },
+        'signinAttempt:1': true,
       },
     });
 
@@ -311,5 +322,170 @@ describe('the round trip back through login and resume', () => {
     expect(loginCalls).toHaveLength(1);
     expect(resultsCalls).toHaveLength(1);
     expect(chrome.tabs.update).toHaveBeenCalledTimes(2);
+  });
+});
+
+/**
+ * Coverage for the five DO-NOT-SHIP findings from the adversarial audit of
+ * the outbound sign-in redirect: an infinite results<->login ping-pong
+ * (Finding 1), cross-site marker evasion (Finding 2), a page-supplied `site`
+ * untied to the real host (Finding 3), a non-atomic guard race (Finding 4),
+ * and a resume/redirect double-navigation race (Finding 5).
+ */
+describe('adversarial audit fixes', () => {
+  it('Finding 1: results(logged out) -> login -> authed -> resume -> results reported AGAIN logged out must NOT redirect a second time', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    await sendMessage(pageReport('results', false), sender(1, RESULTS_URL)); // redirect #1
+    await sendMessage(pageReport('login', false), sender(1, LOGIN_URL));
+    await sendMessage(pageReport('authed', true), sender(1, LOGIN_URL)); // resume
+    // The resumed results page fails to render an AUTHED_SELECTORS control
+    // in time (client-rendered account menu) and reports logged-out again —
+    // this is the exact report that used to disarm the guard and loop.
+    await sendMessage(pageReport('results', false), sender(1, RESULTS_URL));
+
+    const loginCalls = chrome.tabs.update.mock.calls.filter(([, opts]) => opts.url === LOGIN_URL);
+    expect(loginCalls).toHaveLength(1);
+  });
+
+  it('Finding 1: a 40-step honest sign-in simulation produces exactly one redirect total', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    const cycle = [
+      pageReport('results', false),
+      pageReport('login', false),
+      pageReport('authed', true),
+      pageReport('results', false), // resumed page still looks logged-out
+    ];
+    const urlFor = (message) => (message.state === 'login' ? LOGIN_URL : RESULTS_URL);
+
+    for (let step = 0; step < 40; step += 1) {
+      const message = cycle[step % cycle.length];
+      // eslint-disable-next-line no-await-in-loop
+      await sendMessage(message, sender(1, urlFor(message)));
+    }
+
+    const loginCalls = chrome.tabs.update.mock.calls.filter(([, opts]) => opts.url === LOGIN_URL);
+    expect(loginCalls).toHaveLength(1);
+  });
+
+  it('Finding 2: alternating sites in one tab (sfpl -> goodreads -> storygraph -> sfpl, x10) produces exactly one redirect', async () => {
+    // Credentials stored for all three sites — the realistic case, and the
+    // one that actually exercises the bug: the old code's cross-site hole
+    // only matters when a credential exists for the site being hijacked to.
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: {
+        'cred:sfpl': CREDENTIAL,
+        'cred:goodreads': CREDENTIAL,
+        'cred:storygraph': CREDENTIAL,
+      },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    for (let cycle = 0; cycle < 10; cycle += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await sendMessage(pageReport('results', false, 'sfpl'), sender(1, RESULTS_URL));
+      // eslint-disable-next-line no-await-in-loop
+      await sendMessage(pageReport('results', false, 'goodreads'), sender(1, GOODREADS_RESULTS_URL));
+      // eslint-disable-next-line no-await-in-loop
+      await sendMessage(pageReport('results', false, 'storygraph'), sender(1, STORYGRAPH_RESULTS_URL));
+    }
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: LOGIN_URL });
+  });
+
+  it('Finding 3: a Goodreads-hosted page reporting site:"sfpl" is refused (page-supplied site must match sender.url host)', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    await sendMessage(pageReport('results', false, 'sfpl'), sender(1, GOODREADS_RESULTS_URL));
+
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+  });
+
+  it('Finding 3: a Goodreads page correctly reporting site:"goodreads" still redirects to Goodreads login, not SFPL', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:goodreads': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1, GOODREADS_RESULTS_URL, NOW, 'goodreads') },
+    });
+
+    await sendMessage(pageReport('results', false, 'goodreads'), sender(1, GOODREADS_RESULTS_URL));
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: GOODREADS_LOGIN_URL });
+  });
+
+  it('Finding 4: N concurrent identical reports for one tab produce exactly one redirect', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    const N = 12;
+    await Promise.all(
+      Array.from({ length: N }, () => sendMessage(pageReport('results', false), sender(1, RESULTS_URL)))
+    );
+
+    const loginCalls = chrome.tabs.update.mock.calls.filter(([, opts]) => opts.url === LOGIN_URL);
+    expect(loginCalls).toHaveLength(1);
+  });
+
+  it('Finding 5: concurrent authed + results reports for one tab produce exactly one chrome.tabs.update', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    await Promise.all([
+      sendMessage(pageReport('authed', true), sender(1, LOGIN_URL)),
+      sendMessage(pageReport('results', false), sender(1, RESULTS_URL)),
+    ]);
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+  });
+
+  it('the marker survives across many reports and is removed only on tabs.onRemoved', async () => {
+    const { sendMessage, session, removeTab } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    await sendMessage(pageReport('results', false), sender(1, RESULTS_URL));
+    expect(session._dump()['signinAttempt:1']).toBe(true);
+
+    await sendMessage(pageReport('login', false), sender(1, LOGIN_URL));
+    await sendMessage(pageReport('authed', true), sender(1, LOGIN_URL));
+    await sendMessage(pageReport('results', true), sender(1, RESULTS_URL));
+    await sendMessage(pageReport('results', false), sender(1, RESULTS_URL));
+    expect(session._dump()['signinAttempt:1']).toBe(true);
+
+    removeTab(1);
+    await Promise.resolve();
+
+    expect(session._dump()['signinAttempt:1']).toBeUndefined();
+  });
+
+  it('a different tab is still free to redirect once, unaffected by another tab\'s marker or race guards', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: {
+        'signinAttempt:1': true,
+        'intent:2': seededIntent(2),
+      },
+    });
+
+    await sendMessage(pageReport('results', false), sender(2, RESULTS_URL));
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    expect(chrome.tabs.update).toHaveBeenCalledWith(2, { url: LOGIN_URL });
   });
 });

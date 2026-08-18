@@ -1,5 +1,5 @@
 import { ADAPTERS, getAdapter } from './sites/index.js';
-import { createIntent, decide, liveIntent, INTENT_TTL_MS } from './lib/intents.js';
+import { createIntent, decide, liveIntent } from './lib/intents.js';
 import { BADGE } from './lib/badges.js';
 import { normalizeQuery, normalizeMode } from './lib/query.js';
 import { loadCredential } from './lib/credentials.js';
@@ -25,35 +25,82 @@ async function writeIntent(tabId, intent) {
 /**
  * The anti-ping-pong guard for the outbound sign-in redirect below.
  *
- * Without it, results → login → back to results → login → ... loops
- * forever: the owner lands back on results still logged out (autofill only
- * fills, it never submits), which would otherwise look identical to the
- * very first landing and trigger a second redirect immediately. One marker
- * per tab, holding the site it was recorded for and a 10-minute expiry,
- * caps the redirect at once per tab per site per TTL window.
+ * This USED to clear whenever a report had `signedIn === true` — which is
+ * exactly the `authed` report that immediately precedes the resume back to
+ * the results page. That disarmed the guard at the very moment the tab was
+ * sent back to the page that triggered the redirect in the first place: if
+ * the resumed results page didn't render an AUTHED_SELECTORS sign-out
+ * control by `document_idle` (client-rendered account menus; `runner.js`
+ * only re-checks when state is `unknown`), the next `results` report looked
+ * identical to the very first landing and triggered a second redirect —
+ * with nothing to stop a third, and a fourth, forever.
+ *
+ * The fix is a deliberate downgrade: the marker is written once, when a tab
+ * is redirected, and is NEVER cleared by any page report — not on
+ * `signedIn: true`, not on anything. It is removed only in
+ * `chrome.tabs.onRemoved`, alongside the existing intent cleanup. There is
+ * also no expiry: a marker that never expires cannot be waited out. One
+ * outbound redirect per tab, for the life of that tab, full stop. Searches
+ * always open a fresh tab (`runSearch` calls `chrome.tabs.create`), so this
+ * costs the owner nothing in practice — do not "improve" this back into a
+ * guard that can be disarmed or waited out.
  */
 const signinAttemptKey = (tabId) => `signinAttempt:${tabId}`;
 
 async function readSigninAttempt(tabId) {
   const key = signinAttemptKey(tabId);
   const stored = await chrome.storage.session.get(key);
-  return stored[key] || null;
+  return Boolean(stored[key]);
 }
 
-async function writeSigninAttempt(tabId, attempt) {
+async function writeSigninAttempt(tabId, attempted) {
   const key = signinAttemptKey(tabId);
-  if (attempt) {
-    await chrome.storage.session.set({ [key]: attempt });
+  if (attempted) {
+    await chrome.storage.session.set({ [key]: true });
   } else {
     await chrome.storage.session.remove(key);
   }
 }
 
-/** An attempt for a different site, or one past its expiry, counts as absent. */
-function liveSigninAttempt(attempt, site, now) {
-  if (!attempt || attempt.site !== site) return null;
-  return now < attempt.expiresAt ? attempt : null;
-}
+/**
+ * In-memory half of the one-shot-per-tab redirect guard. `readSigninAttempt`
+ * / `writeSigninAttempt` above are `chrome.storage.session` calls — always
+ * async — so a bare "read, check, write" sequence has awaits between the
+ * check and the write, and concurrent reports can all read "no marker yet"
+ * before any of them writes one. This Set is checked and claimed
+ * synchronously, with no `await` between the check and the claim, which is
+ * what actually closes that race: JavaScript is single-threaded, so nothing
+ * else can run between those two lines for a given call. The persisted
+ * marker above is kept as the backup that survives a service-worker
+ * restart, which wipes this Set.
+ *
+ * Entries are added once and never removed except by `chrome.tabs.onRemoved`
+ * — this is the same one-shot-forever marker as `signinAttemptKey`, just
+ * mirrored in memory for atomicity.
+ */
+const redirectedTabs = new Set();
+
+/**
+ * Guards the ENTIRE per-report decision-and-navigate section of
+ * `handlePageReport` for a tab — not just the instant of a `chrome.tabs
+ * .update` call. A lock scoped only to the update call itself is not
+ * enough: two concurrent reports for the same tab (e.g. `authed`, which
+ * resumes, and `results`, which redirects) take a different number of
+ * `await`s to reach their own update call, so one can finish — and release
+ * a narrow lock — before the other ever reaches it, and both still
+ * navigate. Checking and claiming `busyTabs` as the very first thing in
+ * `handlePageReport`, before any `await`, means whichever report's
+ * `onMessage` handler happened to run first (JS is single-threaded, so
+ * that order is deterministic even for messages dispatched "concurrently")
+ * gets to decide and act; every other report for that tab is refused
+ * outright — synchronously, before touching any storage — until the first
+ * one finishes. That closes both the Finding 4 read-modify-write race
+ * (concurrent reports can no longer all observe "not yet redirected") and
+ * the Finding 5 double-navigation race in one guard. Released once the
+ * winning call finishes, so it never blocks a later, non-concurrent report
+ * (e.g. a redirect now and a resume much later).
+ */
+const busyTabs = new Set();
 
 async function setBadge(tabId, badgeName) {
   if (!badgeName) {
@@ -122,69 +169,115 @@ async function runSearch({ query, mode, sites }) {
  * on `results` while signed out — the login page never appears, so the
  * stored-credential autofill never gets a chance to fire. When that happens
  * on a tab this extension itself opened (proven by a *live* intent existing
- * for the tab before `decide()` runs — `decide` clears the intent on
- * `results`, so it must be captured first) and a credential is on file, the
- * worker sends the tab to the site's real login page instead, recording a
- * fresh intent whose `targetUrl` is the current results page (from
- * `sender.url`, never the message body) so the existing `login` → `authed` →
- * resume machinery in decide() carries the tab back once the owner signs in.
- * A per-tab `signinAttempt` marker caps this at one redirect per tab per
- * site per INTENT_TTL_MS window, so a still-logged-out landing after the
- * redirect can never bounce the tab again immediately.
+ * for the tab before `decide()` runs, recorded for the SAME site as this
+ * report — a live intent for a different site does not count, or one SFPL
+ * search tab could authorize a redirect on Goodreads or StoryGraph just by
+ * browsing there afterward — and a credential is on file, the worker sends
+ * the tab to the site's real login page instead, recording a fresh intent
+ * whose `targetUrl` is the current results page (from `sender.url`, never
+ * the message body) so the existing `login` → `authed` → resume machinery
+ * in decide() carries the tab back once the owner signs in.
+ *
+ * Before doing any of that, the adapter resolved from the page-supplied
+ * `site` must have `hostMatch` exactly equal to `new URL(sender.url).host`
+ * — mirroring `shouldAutofill`'s own host check, exact equality only, never
+ * a substring test. `site` is attacker-controlled message content; without
+ * this check a compromised page on one permitted host could name a
+ * different site and get this tab driven to that site's login page with the
+ * resume target pinned to the compromised page's own URL.
+ *
+ * The `redirectedTabs` / `signinAttempt` marker caps this at exactly one
+ * redirect per tab, ever — see the comment above `redirectedTabs` for why
+ * it is never cleared or expired. A tab whose intent already has
+ * `resumed: true` is refused too: that intent already completed its one
+ * round trip and must not be recycled into grounds for another redirect.
  *
  * This never touches a tab the extension did not open: ordinary browsing to
  * a `results` URL has no intent recorded for its tab at all, so the
  * live-intent check refuses it before the credential check is even reached.
  */
 async function handlePageReport({ site, state, signedIn }, tabId, url) {
-  const adapter = getAdapter(site);
-  if (!adapter) return { focus: false };
+  // Finding 4 + 5: see the comment above `busyTabs`. This check-and-claim is
+  // the very first thing the function does, synchronously, before any
+  // `await` — that is what makes it atomic against concurrent reports for
+  // the same tab.
+  if (busyTabs.has(tabId)) return { focus: false };
+  busyTabs.add(tabId);
 
-  const now = Date.now();
-  const priorIntent = await readIntent(tabId);
-  const hadLiveIntent = Boolean(liveIntent(priorIntent, now));
+  try {
+    const adapter = getAdapter(site);
+    if (!adapter) return { focus: false };
 
-  const decision = decide(priorIntent, { state, now });
+    const now = Date.now();
+    const priorIntent = await readIntent(tabId);
+    const priorLive = liveIntent(priorIntent, now);
+    // Finding 2: a live intent only authorizes a redirect for the site it
+    // was actually recorded for.
+    const hadLiveIntent = Boolean(priorLive) && priorLive.site === site;
+    const alreadyResumed = Boolean(priorIntent && priorIntent.resumed);
 
-  await writeIntent(tabId, decision.intent);
-  await setBadge(tabId, decision.badge);
+    const decision = decide(priorIntent, { state, now });
 
-  // The sign-in worked: whatever redirect guard was armed for this tab no
-  // longer needs to be. Strict `=== true` — a missing/undefined signal must
-  // never be treated as proof of anything.
-  if (signedIn === true) {
-    await writeSigninAttempt(tabId, null);
-  }
+    await writeIntent(tabId, decision.intent);
+    await setBadge(tabId, decision.badge);
 
-  if (decision.action === 'resume' && decision.targetUrl) {
-    await chrome.tabs.update(tabId, { url: decision.targetUrl });
-    return { focus: false };
-  }
-
-  const credential = await loadCredential(site);
-
-  if (state === 'results' && signedIn === false && hadLiveIntent && credential) {
-    const priorAttempt = await readSigninAttempt(tabId);
-    if (!liveSigninAttempt(priorAttempt, site, now)) {
-      await writeSigninAttempt(tabId, { site, expiresAt: now + INTENT_TTL_MS });
-      await writeIntent(tabId, createIntent({ tabId, site, targetUrl: url, now }));
-      await chrome.tabs.update(tabId, { url: `https://${adapter.hostMatch}${adapter.loginPath}` });
+    if (decision.action === 'resume' && decision.targetUrl) {
+      await chrome.tabs.update(tabId, { url: decision.targetUrl });
       return { focus: false };
     }
+
+    const credential = await loadCredential(site);
+
+    if (state === 'results' && signedIn === false && hadLiveIntent && credential && !alreadyResumed) {
+      // Finding 3: never trust the message body's `site` on its own —
+      // require it to name the adapter that matches the real host Chrome
+      // reports for the sender.
+      let senderHost = null;
+      try {
+        senderHost = new URL(url).host;
+      } catch {
+        senderHost = null;
+      }
+      const hostMatchesSender = senderHost !== null && adapter.hostMatch === senderHost;
+
+      if (hostMatchesSender) {
+        // Finding 1: synchronous check-and-claim of the permanent, never-
+        // cleared marker. `busyTabs` above already guarantees only one call
+        // can be executing this section for this tab at a time, but the
+        // check and the claim stay adjacent here too, matching the pattern
+        // and making the one-shot invariant obvious on its own.
+        if (!redirectedTabs.has(tabId)) {
+          redirectedTabs.add(tabId);
+
+          // Backup check for a worker restart, which wipes redirectedTabs.
+          const persisted = await readSigninAttempt(tabId);
+          if (!persisted) {
+            await writeSigninAttempt(tabId, true);
+            await writeIntent(tabId, createIntent({ tabId, site, targetUrl: url, now }));
+            await chrome.tabs.update(tabId, {
+              url: `https://${adapter.hostMatch}${adapter.loginPath}`,
+            });
+          }
+        }
+        return { focus: false };
+      }
+    }
+
+    const autofillDecision = shouldAutofill({
+      hasCredential: Boolean(credential),
+      state,
+      url,
+      adapter,
+    });
+
+    if (autofillDecision.fill) {
+      return { focus: false, autofill: { username: credential.username, secret: credential.secret } };
+    }
+
+    return { focus: decision.action === 'focus' };
+  } finally {
+    busyTabs.delete(tabId);
   }
-
-  const autofillDecision = shouldAutofill({
-    hasCredential: Boolean(credential),
-    state,
-    url,
-    adapter,
-  });
-
-  if (autofillDecision.fill) {
-    return { focus: false, autofill: { username: credential.username, secret: credential.secret } };
-  }
-
-  return { focus: decision.action === 'focus' };
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -210,10 +303,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   return false;
 });
 
-// Abandon an intent, and any pending sign-in-redirect guard, when its tab closes.
+// Abandon an intent, and the one-shot sign-in-redirect marker, when its tab
+// closes. This is the ONLY place the redirect marker is ever cleared — see
+// the comment above `redirectedTabs`.
 chrome.tabs.onRemoved.addListener((tabId) => {
   writeIntent(tabId, null);
   writeSigninAttempt(tabId, null);
+  redirectedTabs.delete(tabId);
+  busyTabs.delete(tabId);
 });
 
 // There is deliberately no chrome.tabs.onUpdated listener here. Without the
