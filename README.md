@@ -48,10 +48,16 @@ The content script's side effects, as written today, are: `focus()` on a
 username field, sending a message to the background worker, and — in
 `src/content/autofill.js` only — writing a stored credential into a login
 form's fields and submitting it. No content-script file, including
-`autofill.js`, ever reads a field's contents back, and none of them navigate.
+`autofill.js`, ever reads a field's contents back. `autofill.js` is the one
+exception to "none of them navigate": submitting the login form it just
+filled does navigate the page, which is the entire point of the feature —
+every other navigation primitive (`location.assign`, `location.href =`,
+`window.open`, and so on) stays banned there too, same as everywhere else.
 `test/security-invariants.test.js` greps the source for the obvious forms of
 those violations (`.value` reads, `fetch(`, `location.href =`, and similar)
-and fails the build if one of them regresses in. It is a regression guard,
+— including in `autofill.js` itself, for every check except the one
+`submit()` pattern it exists to trigger — and fails the build if one of them
+regresses in. It is a regression guard,
 not a proof of safety: it is a grep over source text, not a sandboxed
 capability check, so it catches accidental slips but not deliberate
 circumvention. Bracket-notation access (`el['value']`), destructuring
@@ -86,10 +92,12 @@ npm test
 Tested: URL construction for all three sites, page classification against saved
 HTML, the pending-intent state machine, and the security invariants above.
 
-**`src/background.js` has no automated tests.** It is exercised only by the
-manual smoke test described below — there is no unit or integration coverage
-of the service worker itself (message routing, intent persistence, badge
-calls, tab creation/update).
+**`src/background.js`'s autofill hand-out and attempt-cap counting is
+covered** (`test/background.test.js`, driving the real module against a
+stubbed `chrome` global), but nothing else in it is. Search dispatch, intent
+persistence, badge calls outside the autofill path, and tab creation/update
+are exercised only by the manual smoke test described below — there is no
+unit or integration coverage of them.
 
 **Known gap: `authed` detection is unverified against a real page.** The
 signed-in fixtures in `test/fixtures/` (`sfpl-authed-dashboard.html`,
