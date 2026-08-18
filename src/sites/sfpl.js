@@ -5,6 +5,7 @@ export const sfpl = {
   id: 'sfpl',
   label: 'SFPL',
   hostMatch: 'sfpl.bibliocommons.com',
+  loginPath: '/user/login',
 
   buildSearchUrl(query, mode) {
     const params = new URLSearchParams({

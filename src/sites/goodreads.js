@@ -5,6 +5,7 @@ export const goodreads = {
   id: 'goodreads',
   label: 'Goodreads',
   hostMatch: 'www.goodreads.com',
+  loginPath: '/user/sign_in',
 
   buildSearchUrl(query, mode) {
     const params = new URLSearchParams({

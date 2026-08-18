@@ -5,6 +5,7 @@ export const storygraph = {
   id: 'storygraph',
   label: 'StoryGraph',
   hostMatch: 'app.thestorygraph.com',
+  loginPath: '/users/sign_in',
 
   /**
    * StoryGraph has no title/author field distinction — `search_term` is free
