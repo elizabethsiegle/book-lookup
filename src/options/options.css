@@ -51,3 +51,80 @@ section .note {
   font-size: 13px;
   color: var(--accent);
 }
+
+.cred-row {
+  padding: 12px 0;
+  border-top: 1px solid var(--rule);
+}
+
+.cred-row:first-child {
+  border-top: none;
+  padding-top: 0;
+}
+
+.cred-row h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--ink);
+}
+
+.cred-status {
+  margin: 0 0 6px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.cred-disabled-note {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  font-size: 12px;
+  line-height: 1.4;
+  color: #7f1d1d;
+  background: #fdecec;
+  border: 1px solid #f0c4c4;
+  border-radius: 6px;
+}
+
+.cred-disabled-note[hidden] {
+  display: none;
+}
+
+.cred-field {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.cred-field input {
+  display: block;
+  width: 100%;
+  margin-top: 3px;
+  padding: 8px 10px;
+  font-size: 14px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 7px;
+}
+
+.cred-field input:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+  border-color: transparent;
+}
+
+.cred-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.cred-actions button {
+  padding: 7px 14px;
+  font-size: 13px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--rule);
+}

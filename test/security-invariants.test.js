@@ -69,6 +69,24 @@ const IN_PAGE_FILES = [
   'src/lib/query.js',
 ];
 
+/**
+ * `src/content/autofill.js` is the one file permitted to WRITE `.value` — it
+ * injects a credential the worker already holds into a login form. Reading
+ * `.value` back stays banned there too: the extension may never learn what
+ * the user typed. See docs/superpowers/specs/2026-08-12-book-lookup-extension-
+ * design.md, "Credential handling".
+ */
+const WRITE_ALLOWED = ['src/content/autofill.js'];
+
+/**
+ * A `.value` READ is any `.value` occurrence not immediately followed by a
+ * single `=` (an assignment target). `==` and `===` are comparisons — reads,
+ * not writes — so they must NOT be mistaken for the assignment case; the
+ * negative lookahead excludes both by rejecting when a `=` follows the first
+ * `=` too.
+ */
+const VALUE_READ = /\.value\b(?!\s*=(?!=))/;
+
 describe('the comment stripper does not make these invariants vacuous', () => {
   it.each(IN_PAGE_FILES)('%s still has substantial code after stripping', (file) => {
     expect(code(file).trim().length).toBeGreaterThan(50);
@@ -144,14 +162,54 @@ describe('the audited file list tracks the manifest', () => {
 
   it('scans every file the manifest exposes to the page — add a WAR entry, add it here too', () => {
     const warResources = manifest.web_accessible_resources[0].resources;
+    const audited = [...IN_PAGE_FILES, ...WRITE_ALLOWED];
     for (const file of warResources) {
       expect(
-        IN_PAGE_FILES,
-        `${file} is in manifest.json's web_accessible_resources but missing from ` +
-          `IN_PAGE_FILES in test/security-invariants.test.js — it is reachable from page ` +
-          `context and must be scanned by these invariants.`
+        audited,
+        `${file} is in manifest.json's web_accessible_resources but missing from both ` +
+          `IN_PAGE_FILES and WRITE_ALLOWED in test/security-invariants.test.js — it is ` +
+          `reachable from page context and must be scanned by one of these invariant lists.`
       ).toContain(file);
     }
+  });
+});
+
+describe('src/content/autofill.js may write .value but never read it', () => {
+  it.each(WRITE_ALLOWED)('%s contains no .value read', (file) => {
+    expect(code(file)).not.toMatch(VALUE_READ);
+  });
+
+  it.each(WRITE_ALLOWED)('%s still has substantial code after stripping', (file) => {
+    expect(code(file).trim().length).toBeGreaterThan(50);
+  });
+
+  describe('positive controls: the read/write split is real, not inverted', () => {
+    it('a plain assignment passes the write-allowed rule (it is a write, not a read)', () => {
+      const sample = normalizeSpacing('x.value = 1;');
+      expect(sample).not.toMatch(VALUE_READ);
+    });
+
+    it('a declaration reading .value fails the write-allowed rule', () => {
+      const sample = normalizeSpacing("const v = x.value;");
+      expect(sample).toMatch(VALUE_READ);
+    });
+
+    it('a strict-equality comparison reading .value fails the write-allowed rule', () => {
+      // `===` must not be mistaken for the `=` assignment case.
+      const sample = normalizeSpacing("if (x.value === 'a') {}");
+      expect(sample).toMatch(VALUE_READ);
+    });
+
+    it('a loose-equality comparison reading .value fails the write-allowed rule', () => {
+      // `==` must not be mistaken for the `=` assignment case either.
+      const sample = normalizeSpacing('if (x.value == 1) {}');
+      expect(sample).toMatch(VALUE_READ);
+    });
+
+    it('passing .value to a function call fails the write-allowed rule', () => {
+      const sample = normalizeSpacing('foo(x.value);');
+      expect(sample).toMatch(VALUE_READ);
+    });
   });
 });
 
@@ -180,6 +238,7 @@ describe('the manifest requests no more than it needs', () => {
     // badges.js, which nothing in the page-context import graph ever loads.
     expect(manifest.web_accessible_resources[0].resources).toEqual([
       'src/content/runner.js',
+      'src/content/autofill.js',
       'src/sites/index.js',
       'src/sites/sfpl.js',
       'src/sites/goodreads.js',

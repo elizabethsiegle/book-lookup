@@ -42,14 +42,40 @@ function makeFakeStorageLocal({ initial = {}, setDelays = [], getDelays = [] } =
       }, delay);
     });
   });
-  const get = vi.fn((defaults) => {
+  // Mirrors real chrome.storage.local.get's three call shapes: a single key
+  // string (credentials.js's usage), an array of keys, or an object of
+  // key -> default (prefs.js's usage). Getting this shape-faithful matters
+  // once options.js also reads per-site credential/failure keys on init.
+  const get = vi.fn((keys) => {
     const delay = getDelays[getCalls] ?? 0;
     getCalls += 1;
     return new Promise((resolve) => {
-      setTimeout(() => resolve({ ...defaults, ...store }), delay);
+      setTimeout(() => {
+        if (typeof keys === 'string') {
+          resolve(Object.prototype.hasOwnProperty.call(store, keys) ? { [keys]: store[keys] } : {});
+        } else if (Array.isArray(keys)) {
+          const result = {};
+          for (const key of keys) {
+            if (Object.prototype.hasOwnProperty.call(store, key)) result[key] = store[key];
+          }
+          resolve(result);
+        } else {
+          resolve({ ...keys, ...store });
+        }
+      }, delay);
     });
   });
-  return { get, set };
+  const remove = vi.fn((keys) => {
+    return new Promise((resolve) => {
+      setTimeout(() => {
+        for (const key of Array.isArray(keys) ? keys : [keys]) {
+          delete store[key];
+        }
+        resolve();
+      }, 0);
+    });
+  });
+  return { get, set, remove, _dump: () => ({ ...store }) };
 }
 
 function flushPromises(ms = 0) {
@@ -68,15 +94,32 @@ async function loadOptions({ storageLocal, tabsCreate } = {}) {
   };
 
   await import('../src/options/options.js');
-  await flushPromises();
+  await flushPromises(50);
 
   return {
     sitesBox: document.getElementById('sites'),
+    credentialsBox: document.getElementById('credentials'),
     status: document.getElementById('status'),
     openPasswords: document.getElementById('open-passwords'),
     storageLocal: local,
     tabsCreate: create,
   };
+}
+
+function credentialEls(siteId) {
+  return {
+    username: document.getElementById(`cred-username-${siteId}`),
+    secret: document.getElementById(`cred-secret-${siteId}`),
+    save: document.getElementById(`cred-save-${siteId}`),
+    clear: document.getElementById(`cred-clear-${siteId}`),
+    status: document.getElementById(`cred-status-${siteId}`),
+    disabled: document.getElementById(`cred-disabled-${siteId}`),
+  };
+}
+
+function setInput(input, value) {
+  input.value = value;
+  input.dispatchEvent(new Event('input', { bubbles: true }));
 }
 
 function checkboxFor(sitesBox, id) {
@@ -147,5 +190,142 @@ describe('options: password manager button', () => {
 
     expect(tabsCreate).toHaveBeenCalledTimes(1);
     expect(tabsCreate).toHaveBeenCalledWith({ url: 'chrome://settings/passwords' });
+  });
+});
+
+describe('options: credentials — initial render', () => {
+  it('reports "Not stored" for every site with no saved credential', async () => {
+    await loadOptions();
+
+    for (const site of ALL_SITES) {
+      const { status, disabled, username, secret } = credentialEls(site);
+      expect(status.textContent).toBe('Not stored');
+      expect(disabled.hidden).toBe(true);
+      // Never pre-filled, whether or not a credential exists.
+      expect(username.value).toBe('');
+      expect(secret.value).toBe('');
+    }
+  });
+
+  it('reports "Stored" for a site with a saved credential, without ever putting the secret in the password field', async () => {
+    const storageLocal = makeFakeStorageLocal({
+      initial: {
+        sites: [...ALL_SITES],
+        'cred:sfpl': { username: 'card-1234', secret: 'super-secret-pin' },
+      },
+    });
+
+    await loadOptions({ storageLocal });
+
+    const { status, username, secret } = credentialEls('sfpl');
+    expect(status.textContent).toBe('Stored');
+    // The whole point: the stored secret is never read back into the DOM.
+    expect(secret.value).toBe('');
+    expect(username.value).toBe('');
+  });
+
+  it('surfaces the disabled state for a site that tripped the failure cap, and only that site', async () => {
+    const storageLocal = makeFakeStorageLocal({
+      initial: {
+        sites: [...ALL_SITES],
+        'autofillFailures:goodreads': 2,
+      },
+    });
+
+    await loadOptions({ storageLocal });
+
+    const goodreads = credentialEls('goodreads');
+    expect(goodreads.disabled.hidden).toBe(false);
+    expect(goodreads.disabled.textContent).toMatch(/disabled/i);
+    expect(goodreads.disabled.textContent).toMatch(/saving.*again.*re-enables/i);
+
+    for (const site of ['sfpl', 'storygraph']) {
+      expect(credentialEls(site).disabled.hidden).toBe(true);
+    }
+  });
+});
+
+describe('options: saving a credential', () => {
+  it('stores the typed username and secret, clears the fields, and reports "Stored"', async () => {
+    const storageLocal = makeFakeStorageLocal({ initial: { sites: [...ALL_SITES] } });
+    await loadOptions({ storageLocal });
+
+    const { username, secret, save, status } = credentialEls('sfpl');
+    setInput(username, 'card-9999');
+    setInput(secret, '4321');
+    save.click();
+    await flushPromises(20);
+
+    // saveCredential's effect: chrome.storage.local.set with the credential
+    // key, which is the observable proxy for "options.js called
+    // saveCredential" without reaching into its internals.
+    const setCalls = storageLocal.set.mock.calls.map(([partial]) => partial);
+    expect(setCalls).toContainEqual({ 'cred:sfpl': { username: 'card-9999', secret: '4321' } });
+
+    expect(status.textContent).toBe('Stored');
+    // Fields are wiped after save — nothing sensitive lingers in the DOM.
+    expect(username.value).toBe('');
+    expect(secret.value).toBe('');
+  });
+
+  it('re-enables a previously disabled site (saveCredential resets the failure count)', async () => {
+    const storageLocal = makeFakeStorageLocal({
+      initial: { sites: [...ALL_SITES], 'autofillFailures:goodreads': 2 },
+    });
+    await loadOptions({ storageLocal });
+
+    const { username, secret, save, disabled } = credentialEls('goodreads');
+    expect(disabled.hidden).toBe(false);
+
+    setInput(username, 'reader99');
+    setInput(secret, 'newpin');
+    save.click();
+    await flushPromises(20);
+
+    expect(disabled.hidden).toBe(true);
+    const setCalls = storageLocal.set.mock.calls.map(([partial]) => partial);
+    expect(setCalls).toContainEqual({ 'autofillFailures:goodreads': 0 });
+  });
+});
+
+describe('options: clearing a credential', () => {
+  it('removes the stored credential, clears the fields, and reports "Not stored"', async () => {
+    const storageLocal = makeFakeStorageLocal({
+      initial: {
+        sites: [...ALL_SITES],
+        'cred:storygraph': { username: 'reader', secret: 'pin' },
+      },
+    });
+    await loadOptions({ storageLocal });
+
+    const { username, secret, clear, status } = credentialEls('storygraph');
+    expect(status.textContent).toBe('Stored');
+
+    clear.click();
+    await flushPromises(20);
+
+    // clearCredential's effect: chrome.storage.local.remove with the
+    // credential key.
+    expect(storageLocal.remove).toHaveBeenCalledWith('cred:storygraph');
+    expect(status.textContent).toBe('Not stored');
+    expect(username.value).toBe('');
+    expect(secret.value).toBe('');
+  });
+
+  it('does not touch the failure count, so a disabled site stays disabled after clearing', async () => {
+    const storageLocal = makeFakeStorageLocal({
+      initial: {
+        sites: [...ALL_SITES],
+        'cred:sfpl': { username: 'card', secret: 'pin' },
+        'autofillFailures:sfpl': 2,
+      },
+    });
+    await loadOptions({ storageLocal });
+
+    const { clear, disabled } = credentialEls('sfpl');
+    clear.click();
+    await flushPromises(20);
+
+    expect(disabled.hidden).toBe(false);
   });
 });
