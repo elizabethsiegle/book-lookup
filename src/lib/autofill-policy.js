@@ -9,8 +9,6 @@
  * module is what prevents that — treat it as the deliverable, not as
  * bookkeeping around it.
  */
-import { isPathUnder } from './detect-helpers.js';
-
 export const MAX_CONSECUTIVE_FAILURES = 2;
 
 /** `failures >= MAX_CONSECUTIVE_FAILURES` — the shared boundary check. */
@@ -89,7 +87,13 @@ export function shouldAutofill({ hasCredential, failures, state, url, adapter })
     return { fill: false, reason: 'wrong-host' };
   }
 
-  if (!isPathUnder(parsed.pathname, adapter.loginPath)) {
+  // Exact path equality, NOT isPathUnder's subpath match. classify() returns
+  // 'login' for any page with a usable password field, regardless of path —
+  // a password-change or registration page living under
+  // `/user/login/change` would otherwise pass this guard and get filled and
+  // submitted with the stored PIN. The login path itself is never a prefix
+  // worth admitting children of.
+  if (parsed.pathname !== adapter.loginPath) {
     return { fill: false, reason: 'wrong-path' };
   }
 

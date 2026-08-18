@@ -63,6 +63,15 @@ describe('shouldAutofill: every reason branch', () => {
       shouldAutofill({ ...baseArgs(), url: `https://${sfpl.hostMatch}/v2/search` })
     ).toEqual({ fill: false, reason: 'wrong-path' });
   });
+
+  it('wrong-path — a subpath of the login path is refused, not admitted', () => {
+    // A password-change or registration page living under the login path
+    // (e.g. /user/login/change) must not be treated as the login page
+    // itself — only an exact path match may fill and submit the stored PIN.
+    expect(
+      shouldAutofill({ ...baseArgs(), url: `https://${sfpl.hostMatch}${sfpl.loginPath}/change` })
+    ).toEqual({ fill: false, reason: 'wrong-path' });
+  });
 });
 
 describe('shouldAutofill: exact-host check', () => {
