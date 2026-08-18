@@ -16,6 +16,12 @@ async function readIntent(tabId) {
 async function writeIntent(tabId, intent) {
   const key = intentKey(tabId);
   if (intent) {
+    // N2: a handler that is still running when its tab closes must not
+    // resurrect session-storage state for it after `onRemoved` has already
+    // cleared that state — see `closedTabs`. Clearing (the `else` branch
+    // below) is exempt from this guard: it must always be allowed to run,
+    // including from `onRemoved`'s own cleanup call, regardless of ordering.
+    if (closedTabs.has(tabId)) return;
     await chrome.storage.session.set({ [key]: intent });
   } else {
     await chrome.storage.session.remove(key);
@@ -56,6 +62,8 @@ async function readSigninAttempt(tabId) {
 async function writeSigninAttempt(tabId, attempted) {
   const key = signinAttemptKey(tabId);
   if (attempted) {
+    // N2: same guard as `writeIntent` above, same reason.
+    if (closedTabs.has(tabId)) return;
     await chrome.storage.session.set({ [key]: true });
   } else {
     await chrome.storage.session.remove(key);
@@ -101,6 +109,18 @@ const redirectedTabs = new Set();
  * (e.g. a redirect now and a resume much later).
  */
 const busyTabs = new Set();
+
+/**
+ * N2: tabs known to be closed, so that a `handlePageReport` call still
+ * in flight when its tab closes (it awaited storage/adapter work started
+ * before `chrome.tabs.onRemoved` fired) does not write `intent:<id>` or
+ * `signinAttempt:<id>` back into session storage after `onRemoved` already
+ * cleared them — which would otherwise leak that state forever, since
+ * nothing else ever revisits a closed tab's keys. Never pruned: like
+ * `redirectedTabs`, a tab id is done with this extension the moment it
+ * closes, for the life of the service worker.
+ */
+const closedTabs = new Set();
 
 async function setBadge(tabId, badgeName) {
   if (!badgeName) {
@@ -201,7 +221,14 @@ async function handlePageReport({ site, state, signedIn }, tabId, url) {
   // the very first thing the function does, synchronously, before any
   // `await` — that is what makes it atomic against concurrent reports for
   // the same tab.
-  if (busyTabs.has(tabId)) return { focus: false };
+  //
+  // N1: a refused report used to just vanish — no autofill hand-out, no
+  // badge, no resume, and nothing to say any of that was skipped. `busy:
+  // true` tells the caller (src/content/runner.js) it lost the race so it
+  // can retry instead of the page silently going unfilled. This is a hint,
+  // not a promise: the retry is the content script's job, bounded there to
+  // exactly one attempt.
+  if (busyTabs.has(tabId)) return { focus: false, busy: true };
   busyTabs.add(tabId);
 
   try {
@@ -232,13 +259,23 @@ async function handlePageReport({ site, state, signedIn }, tabId, url) {
       // Finding 3: never trust the message body's `site` on its own —
       // require it to name the adapter that matches the real host Chrome
       // reports for the sender.
-      let senderHost = null;
+      //
+      // N3: this must also require `https:`, exactly like `shouldAutofill`'s
+      // own scheme guard — without it, an `http:` sender URL would still
+      // pass the host check, get redirected, and have its `targetUrl` (the
+      // sender URL itself) pinned into the fresh intent, so the eventual
+      // resume would navigate back to `http://…`. Unreachable today because
+      // `content_scripts` only match `https://*`, but this check is meant to
+      // mirror `shouldAutofill`'s and was one guard short of actually doing
+      // so.
+      let senderUrl = null;
       try {
-        senderHost = new URL(url).host;
+        senderUrl = new URL(url);
       } catch {
-        senderHost = null;
+        senderUrl = null;
       }
-      const hostMatchesSender = senderHost !== null && adapter.hostMatch === senderHost;
+      const hostMatchesSender =
+        senderUrl !== null && senderUrl.protocol === 'https:' && adapter.hostMatch === senderUrl.host;
 
       if (hostMatchesSender) {
         // Finding 1: synchronous check-and-claim of the permanent, never-
@@ -307,10 +344,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 // closes. This is the ONLY place the redirect marker is ever cleared — see
 // the comment above `redirectedTabs`.
 chrome.tabs.onRemoved.addListener((tabId) => {
-  writeIntent(tabId, null);
-  writeSigninAttempt(tabId, null);
+  // N2: mark the tab closed BEFORE anything else, so a `handlePageReport`
+  // call already in flight for it (started before this event fired) sees
+  // `closedTabs.has(tabId)` the next time it calls `writeIntent` /
+  // `writeSigninAttempt` and skips writing real state back in. The removal
+  // calls right below are exempt from that guard themselves (see their
+  // `else` branches), so clearing here still runs regardless of ordering.
+  closedTabs.add(tabId);
+  // N4: fire-and-forget, same as everywhere else in this file — a rejected
+  // `storage.remove` (e.g. a torn-down session store) must not surface as an
+  // unhandled promise rejection.
+  writeIntent(tabId, null).catch(() => {});
+  writeSigninAttempt(tabId, null).catch(() => {});
   redirectedTabs.delete(tabId);
-  busyTabs.delete(tabId);
+  // N2: `busyTabs` is deliberately left alone here. A handler still in
+  // flight for this tab owns its own entry and releases it in its `finally`
+  // block when it finishes — see the comment above `busyTabs`. Deleting it
+  // here instead would briefly unlock a tab whose decide-and-navigate
+  // section is still executing, defeating the very guard `busyTabs` exists
+  // to provide.
 });
 
 // There is deliberately no chrome.tabs.onUpdated listener here. Without the

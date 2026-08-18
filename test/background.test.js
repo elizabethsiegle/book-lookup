@@ -488,4 +488,191 @@ describe('adversarial audit fixes', () => {
     expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
     expect(chrome.tabs.update).toHaveBeenCalledWith(2, { url: LOGIN_URL });
   });
+
+  it('re-verify: still exactly ONE outbound redirect per tab across a 100-step honest cycle, and one resume max', async () => {
+    const { sendMessage, chrome } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    const cycle = [
+      pageReport('results', false),
+      pageReport('login', false),
+      pageReport('authed', true),
+      pageReport('results', true),
+    ];
+    const urlFor = (message) => (message.state === 'login' ? LOGIN_URL : RESULTS_URL);
+
+    for (let step = 0; step < 100; step += 1) {
+      const message = cycle[step % cycle.length];
+      // eslint-disable-next-line no-await-in-loop
+      await sendMessage(message, sender(1, urlFor(message)));
+    }
+
+    const loginCalls = chrome.tabs.update.mock.calls.filter(([, opts]) => opts.url === LOGIN_URL);
+    const resultsCalls = chrome.tabs.update.mock.calls.filter(([, opts]) => opts.url === RESULTS_URL);
+    expect(loginCalls).toHaveLength(1);
+    expect(resultsCalls).toHaveLength(1);
+  });
+});
+
+/**
+ * N1: a report refused because the tab is busy (see `busyTabs`) used to be
+ * dropped completely — no autofill hand-out, no badge, no resume, and no
+ * signal that anything was skipped. The worker now says so (`busy: true`)
+ * so src/content/runner.js (see test/runner.test.js for its own coverage)
+ * can retry once. These tests cover the worker's half: producing that
+ * signal, and actually landing the resume once the refused report is
+ * resent.
+ */
+describe('N1: busy refusal signals busy:true and a resend recovers it', () => {
+  it('a busy-refused report replies { focus: false, busy: true }', async () => {
+    const { sendMessage } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    const [loginReply, authedReply] = await Promise.all([
+      sendMessage(pageReport('login', false), sender(1, LOGIN_URL)),
+      sendMessage(pageReport('authed', true), sender(1, LOGIN_URL)),
+    ]);
+
+    // JS is single-threaded (see the busyTabs comment in background.js), so
+    // dispatch order is deterministic: `login` is evaluated first and claims
+    // the lock; `authed` — the one report actually carrying the resume — is
+    // the one refused.
+    expect(loginReply.busy).toBeUndefined();
+    expect(authedReply).toEqual({ focus: false, busy: true });
+  });
+
+  it('reproduction: concurrent login+authed on one tab drops the resume; resending the refused report lands it', async () => {
+    const { sendMessage, chrome, session } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    const [, authedReply] = await Promise.all([
+      sendMessage(pageReport('login', false), sender(1, LOGIN_URL)),
+      sendMessage(pageReport('authed', true), sender(1, LOGIN_URL)),
+    ]);
+
+    // Before the fix, this refusal was the end of the story: zero
+    // navigations, ever, and the intent stuck with resumed:false forever.
+    expect(authedReply).toEqual({ focus: false, busy: true });
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+    expect(session._dump()['intent:1'].resumed).toBe(false);
+
+    // src/content/runner.js is what actually performs this resend on a
+    // `busy: true` reply (test/runner.test.js covers that half in
+    // isolation) — simulated here directly to prove the worker now has a
+    // resume to give it once it does.
+    await sendMessage(pageReport('authed', true), sender(1, LOGIN_URL));
+
+    expect(chrome.tabs.update).toHaveBeenCalledTimes(1);
+    expect(chrome.tabs.update).toHaveBeenCalledWith(1, { url: RESULTS_URL });
+    expect(session._dump()['intent:1'].resumed).toBe(true);
+  });
+});
+
+/**
+ * N2: a handler that is still running when its tab closes (it awaited
+ * storage/adapter work started before `chrome.tabs.onRemoved` fired) used to
+ * be able to write `intent:<id>` / `signinAttempt:<id>` back into session
+ * storage AFTER `onRemoved` had already cleared them, leaking that state
+ * forever — nothing else ever revisits a closed tab's keys. `closedTabs`
+ * (background.js) now makes those write paths skip persisting once a tab is
+ * known closed.
+ */
+describe('N2: a tab closed mid-flight leaves no leaked session-storage keys', () => {
+  it('the outbound-redirect writes started before close do not resurrect intent:/signinAttempt: after the tab is gone', async () => {
+    const { sendMessage, session, removeTab } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    // Delay the very first storage read this report makes (readIntent, at
+    // the top of handlePageReport) so the tab can be closed while this
+    // report is still "in flight" between that read and its later writes —
+    // exactly the race N2 closes. The snapshot returned once released is
+    // fixed to what the intent looked like at the moment the read was
+    // issued — NOT re-queried from the live store, which `removeTab` below
+    // will have already cleared by the time this resolves. That distinction
+    // is the whole test: the handler saw live state that the tab's closure
+    // invalidated out from under it while the read was still pending.
+    let releaseRead;
+    const gate = new Promise((resolve) => {
+      releaseRead = resolve;
+    });
+    const snapshot = { 'intent:1': seededIntent(1) };
+    session.get.mockImplementationOnce(async () => {
+      await gate;
+      return snapshot;
+    });
+
+    const reportPromise = sendMessage(pageReport('results', false), sender(1, RESULTS_URL));
+
+    removeTab(1);
+    await Promise.resolve();
+    await Promise.resolve();
+
+    releaseRead();
+    await reportPromise;
+
+    expect(session._dump()['intent:1']).toBeUndefined();
+    expect(session._dump()['signinAttempt:1']).toBeUndefined();
+  });
+});
+
+/**
+ * N3: the redirect path's host check must require `https:` too, exactly
+ * like `shouldAutofill`'s own scheme guard, or a (currently unreachable —
+ * content_scripts only match https://*) http: sender URL would pass on host
+ * alone, get redirected, and pin its http: URL into the fresh intent as the
+ * resume target.
+ */
+describe('N3: the redirect path requires https:, not just a matching host', () => {
+  it('an http: sender URL is refused even though the host matches', async () => {
+    const { sendMessage, chrome, session } = await loadBackground({
+      localInitial: { 'cred:sfpl': CREDENTIAL },
+      sessionInitial: { 'intent:1': seededIntent(1) },
+    });
+
+    const httpResultsUrl = RESULTS_URL.replace('https://', 'http://');
+    await sendMessage(pageReport('results', false), sender(1, httpResultsUrl));
+
+    expect(chrome.tabs.update).not.toHaveBeenCalled();
+    expect(session._dump()['signinAttempt:1']).toBeUndefined();
+    expect(session._dump()['intent:1']).toBeUndefined();
+  });
+});
+
+/**
+ * N4: writeIntent/writeSigninAttempt in `chrome.tabs.onRemoved` are
+ * fire-and-forget (nothing awaits `onRemoved`'s listener). A rejected
+ * `storage.session.remove` — e.g. a torn-down session store on shutdown —
+ * used to surface as an unhandled promise rejection.
+ */
+describe('N4: onRemoved cleanup does not produce unhandled rejections', () => {
+  it('a failing storage.remove during tab removal is swallowed, not unhandled', async () => {
+    const { session, removeTab } = await loadBackground({
+      sessionInitial: { 'intent:1': seededIntent(1), 'signinAttempt:1': true },
+    });
+    session.remove.mockRejectedValueOnce(new Error('boom'));
+
+    const unhandled = [];
+    const onUnhandledRejection = (reason) => unhandled.push(reason);
+    process.on('unhandledRejection', onUnhandledRejection);
+
+    try {
+      removeTab(1);
+      // Flush the microtask queue the rejected/caught promise chain runs on.
+      await vi.advanceTimersByTimeAsync(0);
+      await Promise.resolve();
+      await Promise.resolve();
+    } finally {
+      process.off('unhandledRejection', onUnhandledRejection);
+    }
+
+    expect(unhandled).toHaveLength(0);
+  });
 });

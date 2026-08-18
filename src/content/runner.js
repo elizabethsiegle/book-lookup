@@ -15,12 +15,29 @@ import { fillCredential } from './autofill.js';
  */
 
 const RECHECK_DELAY_MS = 1500;
+const BUSY_RETRY_DELAY_MS = 300;
 
 // Content scripts re-run fresh on every navigation, so this resets on its
 // own — it exists only to stop a second fill within the same load (e.g. the
 // 1500ms recheck below firing after a fill already went out), so a re-check
 // does not overwrite a field the owner is now typing into.
 let filledThisLoad = false;
+
+// N1: the worker refuses a report outright (`busy: true`) when another
+// report for the same tab is already being decided-and-navigated — see
+// `busyTabs` in src/background.js. A refused report is otherwise dropped
+// completely: no autofill hand-out, no badge, no resume. Retrying once,
+// after a short delay, gives that report a second chance once the winning
+// one has finished.
+//
+// This flag bounds the retry to exactly one for the entire life of this
+// content-script instance (module state resets fresh on every navigation),
+// no matter which call hits it — the initial report or the `unknown`-state
+// recheck below. That is what keeps this a bounded retry rather than a
+// loop, and what keeps it from combining with the recheck into more than
+// two extra reports total: at most one busy retry, ever, plus at most one
+// unknown recheck, ever, and neither schedules the other.
+let busyRetryScheduled = false;
 
 async function report(adapter) {
   const state = adapter.detect(document, location.href);
@@ -40,6 +57,16 @@ async function report(adapter) {
     state,
     signedIn,
   });
+
+  if (reply?.busy) {
+    if (!busyRetryScheduled) {
+      busyRetryScheduled = true;
+      setTimeout(() => {
+        report(adapter).catch(() => {});
+      }, BUSY_RETRY_DELAY_MS);
+    }
+    return state;
+  }
 
   if (reply?.autofill && !filledThisLoad) {
     const filled = fillCredential(document, reply.autofill);
