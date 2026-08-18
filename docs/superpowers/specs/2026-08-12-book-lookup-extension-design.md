@@ -16,31 +16,84 @@ That ranking matters. The happy path — already logged in, one click, three res
 is the demo, and it must be flawless. The login and resume machinery is a correctness
 requirement but a rare path in practice; it is built to fail safe rather than to impress.
 
-## Hard constraint: the extension never handles passwords
+## Credential handling: opt-in, owner-stored, plaintext
 
-This is the central design decision, not a limitation to work around.
+**Revised 2026-08-18.** The original design forbade the extension from ever holding a
+credential. The owner has since chosen to reverse that for their own SFPL library card,
+having been shown what it costs. This section records the new position and the reasoning,
+because a security decision that is not written down gets quietly re-litigated later.
 
-Chrome deliberately blocks content scripts from programmatically filling or submitting
-password fields without a genuine user gesture. This is anti-phishing protection. Fully
-automatic, zero-click login is therefore not achievable, and we do not attempt it.
+### One correction to the original rationale
 
-Passwords live in Chrome's own password manager, saved by the user through
-Settings → Passwords, encrypted and tied to their OS/Google account. The extension's
-entire contribution to login is: navigate to the right page, and focus the username field
-so Chrome's autofill dropdown appears under the cursor.
+The first draft justified the ban partly on a technical claim: that Chrome blocks content
+scripts from filling or submitting password fields without a user gesture. That is not
+accurate for extension content scripts, and the error mattered — it made a policy choice
+look like a platform limit. The accurate position is two separate facts:
 
-The security boundary is enforced structurally, not by convention. The content script has
-exactly two side effects available to it:
+- **The extension can never use a Chrome-saved password.** No API exposes Chrome's password
+  manager to extensions. This remains genuinely impossible.
+- **An extension holding its own copy of a credential can fill and submit a login form.**
+  This works. It was forbidden by choice, not by the platform.
+
+### What is now permitted, and what still is not
+
+Credentials are **opt-in per site, off by default**, entered by the owner in the options
+page, and stored in `chrome.storage.local`.
+
+**They are stored in plaintext.** Extensions have no access to the OS keychain, so there is
+no honest way to encrypt them at rest — a key that ships alongside the ciphertext protects
+nothing. Obfuscating them would create the impression of safety without the substance, which
+is worse than storing them plainly and saying so. Anyone with the owner's user account, and
+any backup or sync of that Chrome profile, can read them. The options page and the README
+both state this in those terms.
+
+Still prohibited, without exception:
+
+- **Reading a value from any field.** The extension may inject a credential it already
+  holds; it may never learn what the user typed. This is the property that actually
+  protects the owner, and it is the one the invariant test now enforces.
+- Transmitting anything off the machine. There is still no network code anywhere.
+- Storing anything a page gave us — page content, URLs with credentials, form state.
+
+### The narrowed structural boundary
+
+The content script's side effects are now:
 
 1. `element.focus()` on a username/email field
 2. `chrome.runtime.sendMessage` to the background worker
+3. **writing** a stored credential into a login form, and submitting it — permitted in
+   exactly one file, `src/content/autofill.js`
 
-It never reads `.value` on any element, never touches a `input[type=password]`, never
-navigates, and never logs DOM contents. A unit test asserts `.value` does not appear in the
-content-script source. Navigation is performed by the background service worker, which page
-context cannot reach.
+The invariant test splits accordingly: a `.value` **write** is legal in `autofill.js` alone;
+a `.value` **read** is illegal everywhere, that file included. Every other content-script
+file keeps the original total ban.
 
-`chrome.storage` holds no secret because the extension is never in a position to obtain one.
+### Attempt limiting is a safety requirement, not a preference
+
+Library systems lock cards after a small number of failed PIN attempts. An extension that
+re-submits on every page load would exhaust that in seconds and lock the owner out of their
+own account — the feature harming the person it serves.
+
+Therefore:
+
+- At most **one** submission per page load.
+- After **two consecutive failures** for a site, autofill disables itself for that site and
+  the badge reports it. It stays off until the owner re-saves the credential, which is an
+  explicit acknowledgement that they believe it is correct now.
+- A failure is: we submitted, the page reloaded, and it still classifies as `login`.
+- The consecutive-failure count resets on any successful login.
+
+### Anti-spoofing guard
+
+Autofill fires only when all of these hold, and skips silently otherwise:
+
+- the page is `https:`
+- the host matches the adapter exactly (the existing exact-host equality, never a substring)
+- the path matches that site's known login path
+- a password field and a resolvable username field are both present
+
+This keeps an open redirect or an injected form on those origins from being handed a
+credential.
 
 ## Verified site behavior
 
@@ -276,7 +329,9 @@ put on a projector.
 
 **Options:** an explanation of the password-manager approach, a button opening
 `chrome://settings/passwords`, the default search mode, and checkboxes for which sites Search
-All includes. No credential fields of any kind.
+All includes. As of 2026-08-18 it also carries the opt-in credential section described above:
+per-site card-number and PIN fields, off by default, each sitting beneath a plain statement
+that the values are stored unencrypted on disk.
 
 ## File layout
 
@@ -308,7 +363,9 @@ test/fixtures/*.html
   and disabled existing keys; StoryGraph has never had a public API. Reverse-engineering
   private endpoints is explicitly not the approach.
 - Handling 2FA or CAPTCHA challenges. These fall back to manual.
-- Credential storage or handling, in any form. This is a security boundary, not a gap.
+- ~~Credential storage or handling, in any form.~~ **Reversed 2026-08-18** at the owner's
+  request — see "Credential handling" above. What remains out of scope is reading any value
+  the user typed, and moving anything off the machine.
 
 ## Caveats
 
