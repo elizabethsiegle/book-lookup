@@ -6,7 +6,6 @@ import { loadCredential, loadFailures, saveFailures } from './lib/credentials.js
 import { shouldAutofill, recordOutcome } from './lib/autofill-policy.js';
 
 const intentKey = (tabId) => `intent:${tabId}`;
-const autofillPendingKey = (tabId) => `autofillPending:${tabId}`;
 
 async function readIntent(tabId) {
   const key = intentKey(tabId);
@@ -21,38 +20,6 @@ async function writeIntent(tabId, intent) {
   } else {
     await chrome.storage.session.remove(key);
   }
-}
-
-async function readAutofillPending(tabId) {
-  const key = autofillPendingKey(tabId);
-  const stored = await chrome.storage.session.get(key);
-  return Boolean(stored[key]);
-}
-
-async function markAutofillPending(tabId) {
-  await chrome.storage.session.set({ [autofillPendingKey(tabId)]: true });
-}
-
-async function clearAutofillPending(tabId) {
-  await chrome.storage.session.remove(autofillPendingKey(tabId));
-}
-
-/**
- * Folds the outcome of a submission made on the PREVIOUS page load into that
- * site's consecutive-failure count, if one is pending for this tab. A
- * failure is: we submitted, the page reloaded, and it still classifies as
- * `login`; anything else counts as success. The marker clears either way —
- * it only ever judges the one page load right after a submission.
- */
-async function resolvePendingAutofill(tabId, site, state) {
-  const pending = await readAutofillPending(tabId);
-  if (!pending) return;
-
-  const outcome = state === 'login' ? 'failure' : 'success';
-  const currentFailures = await loadFailures(site);
-  const { failures } = recordOutcome(currentFailures, outcome);
-  await saveFailures(site, failures);
-  await clearAutofillPending(tabId);
 }
 
 async function setBadge(tabId, badgeName) {
@@ -105,12 +72,45 @@ async function runSearch({ query, mode, sites }) {
  * whether a credential ever leaves the worker always comes from the message
  * sender metadata, never from the message body. A compromised page can lie
  * about `state`; it cannot make Chrome lie about `sender.url`.
+ *
+ * ATTEMPT-CAP REDESIGN (2026-08-18 review, Finding 1): failures used to be
+ * counted only once a later page load re-classified as `login`, confirmed by
+ * a fire-and-forget `autofill-submitted` message from the content script.
+ * That made the cap defeatable three ways at once: a `challenge` or
+ * `unknown` page read as SUCCESS and reset the counter; a client-rendered
+ * login page's `unknown` report at document_idle could consume the pending
+ * marker before the content script's own recheck ever ran; and a lost
+ * `autofill-submitted` message meant a real submission was never counted at
+ * all. All three shared one root cause — counting happened at confirmation
+ * time, which is exactly the step an unreliable channel (page content,
+ * message delivery, timing) can suppress.
+ *
+ * The fix moves counting to hand-out time, which the worker fully controls:
+ * the instant a credential is about to leave the worker, the failure count
+ * is incremented and persisted, BEFORE the reply is sent. An attempt that is
+ * never confirmed — fields not found, tab closed, message lost — still
+ * counts. Over-counting is the safe direction: worst case, autofill disables
+ * itself a little early. Under-counting is the direction that locks the
+ * library card, and that is what this redesign eliminates structurally,
+ * rather than by policing every way the old confirmation channel could fail.
+ *
+ * The count resets to 0 only on a DEFINITIVE success — `authed` or
+ * `results`. `challenge` and `unknown` are INDETERMINATE: they neither
+ * increment (nothing was just handed out for them) nor reset (they are not
+ * proof anything worked). There is no more pending-marker storage and no
+ * more `autofill-submitted` message: with counting anchored to hand-out,
+ * nothing needs to be told about what happened after.
  */
 async function handlePageReport({ site, state }, tabId, url) {
   const adapter = getAdapter(site);
   if (!adapter) return { focus: false };
 
-  await resolvePendingAutofill(tabId, site, state);
+  if (state === 'authed' || state === 'results') {
+    // Definitive success. Whatever got here — an autofilled submission or
+    // the owner logging in by hand — the credential (if any) is proven good
+    // right now, so past failures stop counting against the cap.
+    await saveFailures(site, 0);
+  }
 
   const intent = await readIntent(tabId);
   const decision = decide(intent, { state, now: Date.now() });
@@ -133,12 +133,20 @@ async function handlePageReport({ site, state }, tabId, url) {
     adapter,
   });
 
-  if (autofillDecision.reason === 'disabled') {
-    await setBadge(tabId, 'AUTOFILL_OFF');
+  if (autofillDecision.fill) {
+    // Count NOW, before the credential ever reaches the content script. See
+    // the function-level comment above: this is the one point in the whole
+    // flow that cannot be skipped, lost, or lied about by the page.
+    const { failures: nextFailures, disabled } = recordOutcome(failures, 'failure');
+    await saveFailures(site, nextFailures);
+    if (disabled) {
+      await setBadge(tabId, 'AUTOFILL_OFF');
+    }
+    return { focus: false, autofill: { username: credential.username, secret: credential.secret } };
   }
 
-  if (autofillDecision.fill) {
-    return { focus: false, autofill: { username: credential.username, secret: credential.secret } };
+  if (autofillDecision.reason === 'disabled') {
+    await setBadge(tabId, 'AUTOFILL_OFF');
   }
 
   return { focus: decision.action === 'focus' };
@@ -164,25 +172,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
-  if (message.type === 'autofill-submitted') {
-    const tabId = sender.tab?.id;
-    if (typeof tabId !== 'number') {
-      sendResponse({ ok: false });
-      return false;
-    }
-    markAutofillPending(tabId)
-      .then(() => sendResponse({ ok: true }))
-      .catch(() => sendResponse({ ok: false }));
-    return true;
-  }
-
   return false;
 });
 
 // Abandon an intent when its tab closes.
 chrome.tabs.onRemoved.addListener((tabId) => {
   writeIntent(tabId, null);
-  clearAutofillPending(tabId);
 });
 
 // There is deliberately no chrome.tabs.onUpdated listener here. Without the

@@ -33,17 +33,19 @@ async function report(adapter) {
     const submitted = fillAndSubmit(document, reply.autofill);
     if (submitted) {
       submittedThisLoad = true;
-      chrome.runtime
-        .sendMessage({ type: 'autofill-submitted', site: adapter.id })
-        .catch(() => {});
     }
     return state;
   }
 
   if (reply?.focus) {
     const field = findUsernameField(document);
-    // Focus surfaces Chrome's own autofill suggestion. Chrome deliberately
-    // blocks scripted password entry; we neither want nor attempt it.
+    // Focus surfaces Chrome's own autofill suggestion. This is the read-only
+    // path used when the owner has NOT opted in to autofill for this site:
+    // Chrome does not block scripted password entry for extension content
+    // scripts (see the spec's "Credential handling" section, which retracts
+    // that earlier claim) — src/content/autofill.js does exactly that, on
+    // purpose, when a credential is on file. This branch simply doesn't
+    // attempt it, because there is no credential to fill with here.
     if (field) field.focus();
   }
 
