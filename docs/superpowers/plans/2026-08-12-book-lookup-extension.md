@@ -2751,7 +2751,10 @@ With the extension loaded and reloaded at `chrome://extensions`:
 5. **Resume after login.** Complete that login. Expected: the tab navigates itself, once, to the StoryGraph browse results for the query. The badge clears.
 6. **No second resume.** Navigate that tab to StoryGraph's home page manually. Expected: nothing happens. No navigation.
 7. **Expiry.** Open a search, leave the login page sitting for over ten minutes, then log in. Expected: no resume. The intent expired.
-8. **Off-domain clearing.** Start a search, then navigate that tab to `example.com`. Expected: the badge clears.
+8. **Off-domain navigation.** Start a search, then navigate that tab to `example.com`. Expected: the badge
+   PERSISTS. This is correct, not a bug. The off-host clearing guard was removed during the final review as
+   unimplementable — without the `tabs` permission Chrome withholds `changeInfo.url` for exactly those
+   navigations. The badge clears when the tab returns to a recognized page, or when the tab closes.
 9. **Empty query.** Open the popup with the box empty. Expected: every button disabled.
 10. **Service worker console.** At `chrome://extensions` → **service worker**, confirm no errors were logged during any of the above.
 
