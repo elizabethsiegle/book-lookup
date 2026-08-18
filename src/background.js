@@ -94,21 +94,49 @@ async function runSearch({ query, mode, sites }) {
  * library card, and that is what this redesign eliminates structurally,
  * rather than by policing every way the old confirmation channel could fail.
  *
- * The count resets to 0 only on a DEFINITIVE success — `authed` or
- * `results`. `challenge` and `unknown` are INDETERMINATE: they neither
- * increment (nothing was just handed out for them) nor reset (they are not
- * proof anything worked). There is no more pending-marker storage and no
- * more `autofill-submitted` message: with counting anchored to hand-out,
- * nothing needs to be told about what happened after.
+ * The count resets to 0 only on an explicit `signedIn` signal — never on
+ * `state` alone, no matter which state. This was NOT always true: an
+ * earlier version of this redesign reset on `state === 'authed' ||
+ * state === 'results'`, which a 2026-08-25 review found to be a new
+ * Critical defect (Finding 2). `classify()` in
+ * src/lib/detect-helpers.js derives `results` from the URL PATH ALONE —
+ * SFPL's `/v2/search` and Goodreads' `/search` serve results to
+ * logged-out visitors too — and `runSearch` above opens exactly those
+ * URLs as the extension's own core action. Resetting on `results` meant
+ * three ordinary searches after a bad hand-out silently re-armed the cap
+ * the extension exists to enforce, directly contradicting the spec's
+ * "stays off until the owner re-saves the credential." `authed` is
+ * inferred by classify() the same state-alone way and carries the same
+ * risk in principle, so it gets no special exemption either.
+ *
+ * `signedIn` is computed by the content script from
+ * `matchesAny(document, AUTHED_SELECTORS)` — a real sign-out-control
+ * check, not a URL guess — and travels alongside `state` in the `page`
+ * message. `challenge` and `unknown` remain INDETERMINATE regardless of
+ * `signedIn`: they neither increment (nothing was just handed out for
+ * them) nor reset. That is why the check below still gates on `state`
+ * being `authed` or `results` as well as `signedIn` — `signedIn` narrows
+ * those two states from "maybe" to "proven," it does not turn every state
+ * into a reset trigger on its own.
+ *
+ * KNOWN LIMITATION, accepted: the content script — running in the page's
+ * own origin — is what supplies `signedIn`, so a page compromised on one
+ * of these three origins could claim `signedIn: true` and reset the cap
+ * early. That is acceptable: this cap defends against the extension's
+ * OWN repeated submissions locking the card, not against a hostile page,
+ * and a page compromised on these origins could already do worse than
+ * nudge a failure counter.
  */
-async function handlePageReport({ site, state }, tabId, url) {
+async function handlePageReport({ site, state, signedIn }, tabId, url) {
   const adapter = getAdapter(site);
   if (!adapter) return { focus: false };
 
-  if (state === 'authed' || state === 'results') {
-    // Definitive success. Whatever got here — an autofilled submission or
-    // the owner logging in by hand — the credential (if any) is proven good
-    // right now, so past failures stop counting against the cap.
+  if ((state === 'authed' || state === 'results') && signedIn === true) {
+    // Definitive success, proven by an actual signed-in marker — not by
+    // which URL happened to load. Whatever got here — an autofilled
+    // submission or the owner logging in by hand — the credential (if any)
+    // is proven good right now, so past failures stop counting against the
+    // cap.
     await saveFailures(site, 0);
   }
 

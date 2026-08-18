@@ -89,8 +89,10 @@ async function loadBackground({ localInitial = {} } = {}) {
   };
 }
 
-function pageReport(state) {
-  return { type: 'page', site: 'sfpl', state };
+function pageReport(state, signedIn) {
+  const message = { type: 'page', site: 'sfpl', state };
+  if (signedIn !== undefined) message.signedIn = signedIn;
+  return message;
 }
 
 function sender(tabId = 1) {
@@ -189,7 +191,7 @@ describe('attempt-cap redesign: counting happens at hand-out, not confirmation',
     expect(local._dump()['autofillFailures:sfpl']).toBe(2);
   });
 
-  it('an authed page DOES reset the count', async () => {
+  it('an authed page with signedIn:true DOES reset the count', async () => {
     const { sendMessage, local } = await loadBackground({
       localInitial: {
         'cred:sfpl': { username: 'card-1', secret: '1234' },
@@ -201,7 +203,7 @@ describe('attempt-cap redesign: counting happens at hand-out, not confirmation',
     const disabled = await sendMessage(pageReport('login'), sender());
     expect(disabled.autofill).toBeUndefined();
 
-    await sendMessage(pageReport('authed'), sender());
+    await sendMessage(pageReport('authed', true), sender());
     expect(local._dump()['autofillFailures:sfpl']).toBe(0);
 
     // Re-armed: the very next login page gets the credential again.
@@ -209,7 +211,7 @@ describe('attempt-cap redesign: counting happens at hand-out, not confirmation',
     expect(rearmed.autofill).toBeTruthy();
   });
 
-  it('a results page DOES reset the count', async () => {
+  it('a results page with signedIn:true DOES reset the count', async () => {
     const { sendMessage, local } = await loadBackground({
       localInitial: {
         'cred:sfpl': { username: 'card-1', secret: '1234' },
@@ -217,7 +219,89 @@ describe('attempt-cap redesign: counting happens at hand-out, not confirmation',
       },
     });
 
-    await sendMessage(pageReport('results'), sender());
+    await sendMessage(pageReport('results', true), sender());
     expect(local._dump()['autofillFailures:sfpl']).toBe(0);
+  });
+});
+
+/**
+ * 2026-08-25 review, Finding 2 (CRITICAL): `classify()` in
+ * src/lib/detect-helpers.js returns `results` from the URL path alone —
+ * SFPL's `/v2/search` and Goodreads' `/search` serve results to logged-out
+ * visitors too. background.js used to reset the failure count on `results`
+ * unconditionally, and `runSearch` opens exactly those URLs as the
+ * extension's own core action: three ordinary searches after a bad hand-out
+ * silently re-armed the cap the extension exists to enforce. `authed` is
+ * inferred by classify() the same state-alone way, so it carries the same
+ * risk if a future redesign of a site's chrome ever made `authed` reachable
+ * without an actual sign-out control present.
+ *
+ * The fix: only an explicit `signedIn` flag — computed by the content script
+ * from `matchesAny(document, AUTHED_SELECTORS)`, a real sign-out-control
+ * check, not a URL-path guess — may reset the count. `state` alone, no
+ * matter which state, never does.
+ */
+describe('reset requires an explicit signedIn signal, not state alone (2026-08-25 review, Finding 2)', () => {
+  it('REGRESSION: a logged-out results page (signedIn: false) does NOT reset the count', async () => {
+    const { sendMessage, local } = await loadBackground({
+      localInitial: {
+        'cred:sfpl': { username: 'card-1', secret: '1234' },
+        'autofillFailures:sfpl': 2,
+      },
+    });
+
+    await sendMessage(pageReport('results', false), sender());
+    expect(local._dump()['autofillFailures:sfpl']).toBe(2);
+  });
+
+  it('an authed page with signedIn:false does NOT reset the count', async () => {
+    const { sendMessage, local } = await loadBackground({
+      localInitial: {
+        'cred:sfpl': { username: 'card-1', secret: '1234' },
+        'autofillFailures:sfpl': 2,
+      },
+    });
+
+    await sendMessage(pageReport('authed', false), sender());
+    expect(local._dump()['autofillFailures:sfpl']).toBe(2);
+  });
+
+  it('challenge and unknown never reset the count, regardless of signedIn', async () => {
+    const { sendMessage, local } = await loadBackground({
+      localInitial: {
+        'cred:sfpl': { username: 'card-1', secret: '1234' },
+        'autofillFailures:sfpl': 2,
+      },
+    });
+
+    await sendMessage(pageReport('challenge', true), sender());
+    expect(local._dump()['autofillFailures:sfpl']).toBe(2);
+
+    await sendMessage(pageReport('unknown', true), sender());
+    expect(local._dump()['autofillFailures:sfpl']).toBe(2);
+  });
+
+  it('END-TO-END: wrong credential trips the cap, then three ordinary logged-out-results searches leave the site disabled', async () => {
+    // The exact repro from the review: a bad PIN gets handed out twice,
+    // reaching the cap, and then the owner runs three completely ordinary
+    // searches — the extension's own core `runSearch` action — each of
+    // which opens a `results`-classified URL while still logged out. None
+    // of those three may re-arm the cap.
+    const { sendMessage, local } = await loadBackground({
+      localInitial: { 'cred:sfpl': { username: 'card-1', secret: 'wrong-pin' } },
+    });
+
+    await sendMessage(pageReport('login'), sender());
+    await sendMessage(pageReport('login'), sender());
+    expect(local._dump()['autofillFailures:sfpl']).toBe(2);
+
+    for (let i = 0; i < 3; i += 1) {
+      // eslint-disable-next-line no-await-in-loop
+      await sendMessage(pageReport('results', false), sender());
+    }
+    expect(local._dump()['autofillFailures:sfpl']).toBe(2);
+
+    const stillDisabled = await sendMessage(pageReport('login'), sender());
+    expect(stillDisabled.autofill).toBeUndefined();
   });
 });

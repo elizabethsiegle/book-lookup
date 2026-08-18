@@ -1,5 +1,5 @@
 import { adapterForUrl } from '../sites/index.js';
-import { findUsernameField } from '../lib/detect-helpers.js';
+import { findUsernameField, matchesAny, AUTHED_SELECTORS } from '../lib/detect-helpers.js';
 import { fillAndSubmit } from './autofill.js';
 
 /**
@@ -23,10 +23,21 @@ let submittedThisLoad = false;
 
 async function report(adapter) {
   const state = adapter.detect(document, location.href);
+  // A URL path alone is not proof of being signed in: SFPL's /v2/search and
+  // Goodreads' /search classify as `state === 'results'` for logged-out
+  // visitors too, and runSearch() opens exactly those URLs as this
+  // extension's core action. `signedIn` is a separate, honest signal — a
+  // real sign-out control actually present in the DOM — so the worker can
+  // tell "this URL happens to be a results page" apart from "this page
+  // proves the credential worked." This is a boolean classification, not
+  // field content: matchesAny() only checks for the presence of selectors,
+  // never reads a field's `.value`.
+  const signedIn = matchesAny(document, AUTHED_SELECTORS);
   const reply = await chrome.runtime.sendMessage({
     type: 'page',
     site: adapter.id,
     state,
+    signedIn,
   });
 
   if (reply?.autofill && !submittedThisLoad) {
